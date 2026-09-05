@@ -81,6 +81,10 @@ STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_PUBLISHABLE_KEY=
 OPENAI_API_KEY=
+
+# Suggested-price AI (Amazon Bedrock Kimi K2.5)
+AWS_REGION=us-east-1
+AWS_BEARER_TOKEN_BEDROCK=
 ```
 
 ### 3. Database Setup And Migrations

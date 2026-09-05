@@ -36,8 +36,11 @@ contact suppliers, send messages, run queue workers, or invoke payment APIs.
 - Normalized duplicate rows use an unweighted median of eligible source-row
   medians per individual device and repair variant. Every row must use 2x markup
   and $30 labor. These decisions are saved in the snapshot.
-- No brand-wide inventory fallback or arbitrary baseline is used for new requests.
-  An unsupported model/repair combination returns 422 and cannot be posted.
+- Every device exposes the complete repair category list. Existing workbook rows
+  use the dataset price; missing model/repair combinations are estimated by
+  Bedrock Kimi K2.5. During a Bedrock throttle or outage, a short-lived
+  catalog-derived estimate keeps the minimum enforceable and is labeled
+  `source:"fallback"`; the service retries Bedrock after 15 minutes.
 - All prices are treated as USD, matching the existing apps. The workbook itself
   does not specify a currency code.
 
@@ -57,12 +60,13 @@ Public routes use the existing `{success:true,data:...}` envelope:
 | --- | --- |
 | `GET /v1/device-models?brand=&query=&limit=100&supportedOnly=true` | Search models with active dataset pricing; max 500 results per search |
 | `GET /v1/device-models/brands?supportedOnly=true` | Brands with active dataset prices |
-| `GET /v1/issue-types?deviceModelId=UUID` | Only the selected model's supported repairs |
+| `GET /v1/issue-types?deviceModelId=UUID` | Complete repair list for the selected model; dataset prices are included when present |
 | `GET /v1/price-estimate?deviceModelId=UUID&issueType=SCREEN` | Authoritative model/repair quote |
 | `POST /v1/customer/requests` | Authenticated request; requires model ID, canonical brand/model, repair ID, integer offer cents, location, and usual request fields |
 
 The quote includes `deviceModelId`, `deviceBrand`, `deviceModel`, `issueType`,
-`issueDisplayName`, `catalogVersion`, `source:"dataset"`, `currency:"USD"`,
+`issueDisplayName`, `catalogVersion`, `source:"dataset"`, `source:"bedrock"`, or
+`source:"fallback"`, `currency:"USD"`,
 `partsCost`, `partsCostCents`, `markupMultiplier`, `laborFeeCents`,
 `suggestedPriceCents`, `minPriceCents`, and `suggestedOfferCents`.
 All three price aliases equal the required floor. Parts medians may include

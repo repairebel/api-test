@@ -39,6 +39,10 @@ Keep secrets in Railway Variables; do not upload a local `.env` or SQL dump.
 - Existing email variables: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
   `SMTP_FROM`.
 - Configure test Cloudinary/Stripe credentials if testing uploads/payments.
+- `AWS_REGION=us-east-1` and `AWS_BEARER_TOKEN_BEDROCK`: Bedrock Kimi K2.5
+  credentials for missing model/part prices. Keep the bearer token only in
+  Railway Variables; never commit it. If Bedrock is throttled, the API serves a
+  short-lived catalog fallback and retries Bedrock after 15 minutes.
 
 Railway provides `PORT`; the API binds that port on `0.0.0.0`.
 
