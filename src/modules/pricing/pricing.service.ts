@@ -45,8 +45,19 @@ export async function getDatasetQuote(input: {
   let repair;
   try { repair = parseRepair(input.issueType,input.customPartName); }
   catch { throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Choose a valid issue. Others requires a custom part name of 1–10 words (maximum 200 characters).'); }
-  const [device] = await db.select().from(deviceModels).where(eq(deviceModels.id,input.deviceModelId)).limit(1);
-  if (!device) throw new AppError(422, ErrorCode.VALIDATION_ERROR, 'Select an available device model.');
+  const [catalogDevice] = await db.select().from(deviceModels).where(eq(deviceModels.id,input.deviceModelId)).limit(1);
+  // A manually entered device has a client-generated UUID and no catalog row.
+  // Keep its brand/model in the quote snapshot and send it to Bedrock so the
+  // request remains persisted and enforceable like a catalog device.
+  const device = catalogDevice ?? (input.deviceBrand && input.deviceModel ? {
+    id: input.deviceModelId,
+    brand: input.deviceBrand.trim(),
+    modelName: input.deviceModel.trim(),
+    deviceType: 'Smartphone',
+    modelNumber: null,
+    createdAt: new Date(),
+  } : null);
+  if (!device) throw new AppError(422, ErrorCode.VALIDATION_ERROR, 'Select an available device model or enter your device details.');
   if ((input.deviceBrand && input.deviceBrand !== device.brand) || (input.deviceModel && input.deviceModel !== device.modelName)) {
     throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'The device details do not match the selected model.');
   }

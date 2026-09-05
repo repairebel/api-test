@@ -13,6 +13,7 @@ export interface AccessTokenPayload {
   userType: UserType;
   shopId?: string;   // only for SHOP_OWNER
   role?: ShopRole;   // only for SHOP_OWNER
+  sessionVersion?: number; // current shop-owner device session
   jti: string;       // unique token id (for blacklisting)
 }
 

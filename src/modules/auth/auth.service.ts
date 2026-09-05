@@ -1,4 +1,4 @@
-import { eq, and, isNull, gt } from 'drizzle-orm';
+import { eq, and, isNull, gt, sql } from 'drizzle-orm';
 import { db } from '../../db/client.js';
 import { users, shops, memberships, refreshTokens, passwordResetTokens, adminUsers } from '../../db/schema/index.js';
 import { hashPassword, verifyPassword } from '../../lib/password.js';
@@ -69,6 +69,7 @@ export async function signup({ email, password, shopName }: SignupBody) {
     userType: 'SHOP_OWNER',
     shopId: result.shop.id,
     role: 'OWNER',
+    sessionVersion: 0,
   });
 
   const rawRefreshToken = generateRefreshToken();
@@ -205,6 +206,7 @@ export async function login({ email, password, expectedUserType }: LoginBody) {
       avatarUrl: users.avatarUrl,
       status: users.status,
       userType: users.userType,
+      sessionVersion: users.sessionVersion,
     })
     .from(users)
     .where(conditions)
@@ -222,6 +224,20 @@ export async function login({ email, password, expectedUserType }: LoginBody) {
 
   if (user.status === 'SUSPENDED') {
     throw new AppError(403, ErrorCode.FORBIDDEN, suspendedMessage);
+  }
+
+  // Store accounts are single-device sessions. A new login invalidates every
+  // previous refresh token and advances the access-token version immediately.
+  let sessionVersion = user.sessionVersion;
+  if (user.userType === 'SHOP_OWNER') {
+    await db.update(refreshTokens).set({ revokedAt: new Date() }).where(
+      and(eq(refreshTokens.userId, user.id), isNull(refreshTokens.revokedAt)),
+    );
+    const [updatedUser] = await db.update(users)
+      .set({ sessionVersion: sql`${users.sessionVersion} + 1`, updatedAt: new Date() })
+      .where(eq(users.id, user.id))
+      .returning({ sessionVersion: users.sessionVersion });
+    sessionVersion = updatedUser?.sessionVersion ?? sessionVersion + 1;
   }
 
   // Generate refresh token (common to both user types)
@@ -330,6 +346,7 @@ export async function login({ email, password, expectedUserType }: LoginBody) {
     userType: user.userType,
     shopId: membership.shopId,
     role: membership.role,
+    sessionVersion,
   });
 
   return {
@@ -384,7 +401,7 @@ export async function refresh(rawRefreshToken: string) {
 
   // Look up user type
   const [user] = await db
-    .select({ userType: users.userType, status: users.status })
+    .select({ userType: users.userType, status: users.status, sessionVersion: users.sessionVersion })
     .from(users)
     .where(eq(users.id, storedToken.userId))
     .limit(1);
@@ -431,6 +448,7 @@ export async function refresh(rawRefreshToken: string) {
       userType: user.userType,
       shopId: membership.shopId,
       role: membership.role,
+      sessionVersion: user.sessionVersion,
     });
   }
 

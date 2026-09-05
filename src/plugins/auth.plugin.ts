@@ -84,7 +84,7 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     const [user] = await db
-      .select({ id: users.id, status: users.status })
+      .select({ id: users.id, status: users.status, sessionVersion: users.sessionVersion })
       .from(users)
       .where(eq(users.id, decoded.sub))
       .limit(1);
@@ -97,9 +97,22 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       throw new AppError(403, ErrorCode.FORBIDDEN, 'Due to Unusual Activities Your Account has been suspended');
     }
 
+    const tokenUserType = decoded.userType ?? 'SHOP_OWNER';
+    // Tokens issued before the session-version migration are treated as
+    // version 0. They remain valid for existing sessions, but are rejected
+    // immediately after a newer shop login advances the account version.
+    if (
+      tokenUserType === 'SHOP_OWNER' &&
+      (decoded.sessionVersion === undefined
+        ? user.sessionVersion > 0
+        : decoded.sessionVersion !== user.sessionVersion)
+    ) {
+      throw new AppError(401, ErrorCode.UNAUTHORIZED, 'This session ended because the account was signed in on another device');
+    }
+
     request.user = {
       userId: decoded.sub,
-      userType: decoded.userType ?? 'SHOP_OWNER', // backward compat for old tokens
+      userType: tokenUserType, // backward compat for old tokens
       shopId: decoded.shopId ?? '',
       role: decoded.role ?? '',
       jti: decoded.jti,

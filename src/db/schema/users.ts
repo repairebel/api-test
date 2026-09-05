@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, pgEnum, unique, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, pgEnum, unique, boolean, integer } from 'drizzle-orm/pg-core';
 
 export const userTypeEnum = pgEnum('user_type', ['CUSTOMER', 'SHOP_OWNER', 'ADMIN']);
 
@@ -12,6 +12,8 @@ export const users = pgTable('users', {
   userType: userTypeEnum('user_type').notNull().default('SHOP_OWNER'),
   stripeCustomerId: text('stripe_customer_id'),
   status: varchar('status', { length: 20 }).notNull().default('ACTIVE'),
+  // Incremented on each shop-owner login so older devices are invalidated.
+  sessionVersion: integer('session_version').notNull().default(0),
   // Privacy preferences (customer only)
   privacyShareUsage: boolean('privacy_share_usage').notNull().default(true),
   privacyShareLocation: boolean('privacy_share_location').notNull().default(true),
