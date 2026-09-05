@@ -16,6 +16,12 @@ async function main() {
   try {
     const client = await pool.connect();
     client.release();
+    // Railway may start a new release before its pre-deploy command has
+    // finished. Keep the session-version change self-healing so the login
+    // route never fails with a missing-column 500 during that window.
+    await pool.query(
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version integer NOT NULL DEFAULT 0',
+    );
     app.log.info('✅ PostgreSQL connected');
   } catch (err) {
     app.log.error({ err }, '❌ PostgreSQL connection failed');
