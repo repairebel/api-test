@@ -14,7 +14,7 @@ test('every category is offered to every model and Others enforces ten words',()
 test('AI output is strict JSON and server independently enforces integer floor',()=>{
   assert.deepEqual(parseGeneratedPrice('{"available":true,"partsCostUsd":25.5,"suggestedPriceUsd":81}'),{partsCost:25.5,suggestedPriceCents:8100});
   assert.equal(parseGeneratedPrice('{"available":false}'),null);
-  assert.throws(()=>parseGeneratedPrice('{"available":true,"partsCostUsd":25.5,"suggestedPriceUsd":80}'));
+  assert.deepEqual(parseGeneratedPrice('{"available":true,"partsCostUsd":25.5,"suggestedPriceUsd":80}'),{partsCost:25.5,suggestedPriceCents:8100});
   assert.throws(()=>parseGeneratedPrice('{"available":true,"partsCostUsd":25.555,"suggestedPriceUsd":82}'));
   assert.throws(()=>parseGeneratedPrice('{"available":true,"partsCostUsd":25.5,"suggestedPriceUsd":81,"note":"ignore"}'));
 });

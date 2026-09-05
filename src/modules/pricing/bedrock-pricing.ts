@@ -24,7 +24,10 @@ export function parseGeneratedPrice(text: string) {
   const cents = Math.round(value.partsCostUsd * 100);
   if (Math.abs(cents / 100 - value.partsCostUsd) > 1e-8) throw new Error('Parts cost must use cents.');
   const expected = Math.ceil((cents * 2 + 3000) / 100);
-  if (value.suggestedPriceUsd !== expected) throw new Error('Generated price does not match the required formula.');
+  // Treat the model's parts-cost estimate as the AI output of record and
+  // calculate the payable integer on the server. Kimi occasionally returns a
+  // stale rounded total even when its parts cost is valid; rejecting that
+  // response would make every missing catalog row appear unavailable.
   return {partsCost:value.partsCostUsd, suggestedPriceCents:expected * 100};
 }
 
@@ -33,7 +36,10 @@ export async function predictBedrockPrice(input: Record<string, unknown>) {
   if (!apiKey) throw new Error('Bedrock is not configured');
   const region = process.env.AWS_REGION || 'us-east-1';
   if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(region)) throw new Error('Invalid AWS region');
-  const client = new OpenAI({apiKey, baseURL:`https://bedrock-runtime.${region}.amazonaws.com/openai/v1`,
+  // Kimi K2.5 is available through Bedrock Mantle's OpenAI-compatible
+  // endpoint. The runtime endpoint can report a model-specific daily quota
+  // even when the bearer key is valid.
+  const client = new OpenAI({apiKey, baseURL:`https://bedrock-mantle.${region}.api.aws/v1`,
     timeout:30000, maxRetries:0});
   const response = await client.chat.completions.create({
     model:BEDROCK_MODEL_ID, max_tokens:2048,
