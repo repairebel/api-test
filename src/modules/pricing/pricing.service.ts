@@ -24,12 +24,19 @@ export function describeRepair(id: string, label?: string) {
 }
 
 export async function getDatasetIssues(deviceModelId?: string) {
-  const rows = deviceModelId ? await db.select({issueType:repairPrices.issueType,suggestedPriceCents:repairPrices.suggestedPriceCents})
+  const rows = deviceModelId ? await db.select({issueType:repairPrices.issueType,category:repairPrices.category,active:repairPrices.active,suggestedPriceCents:repairPrices.suggestedPriceCents})
     .from(repairPrices).where(and(eq(repairPrices.active,true),eq(repairPrices.deviceModelId,deviceModelId))) : [];
   const prices = new Map(rows.map(row => [row.issueType,row.suggestedPriceCents]));
-  return Object.entries(ISSUE_CATEGORIES).map(([id,label]) => ({...describeRepair(id,label),
+  const builtIn = Object.entries(ISSUE_CATEGORIES).map(([id,label]) => ({...describeRepair(id,label),
     ...(prices.has(id) ? {suggestedPriceCents:prices.get(id)} : {}),
     ...(id==='OTHER' ? {description:'Enter a custom part name, up to 10 words.',maxCustomPartWords:10} : {})}));
+  const custom = rows.filter(row => !Object.hasOwn(ISSUE_CATEGORIES, row.issueType)).map(row => ({
+    ...describeRepair(row.issueType, row.category),
+    suggestedPriceCents: row.suggestedPriceCents,
+    description: `${row.category} repair or replacement`,
+    isCustom: true,
+  }));
+  return [...builtIn, ...custom];
 }
 
 export async function getDatasetQuote(input: {
@@ -39,12 +46,19 @@ export async function getDatasetQuote(input: {
   deviceModel?: string;
   customPartName?: string;
 }) {
-  if (!Object.hasOwn(ISSUE_CATEGORIES,input.issueType)) {
-    throw new AppError(422, ErrorCode.VALIDATION_ERROR, 'Suggested pricing is unavailable for this repair. Choose a supported repair.');
-  }
   let repair;
-  try { repair = parseRepair(input.issueType,input.customPartName); }
-  catch { throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Choose a valid issue. Others requires a custom part name of 1–10 words (maximum 200 characters).'); }
+  if (Object.hasOwn(ISSUE_CATEGORIES,input.issueType)) {
+    try { repair = parseRepair(input.issueType,input.customPartName); }
+    catch { throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Choose a valid issue. Others requires a custom part name of 1–10 words (maximum 200 characters).'); }
+  } else {
+    const [customPrice] = await db.select({ category: repairPrices.category })
+      .from(repairPrices)
+      .where(and(eq(repairPrices.deviceModelId, input.deviceModelId), eq(repairPrices.issueType, input.issueType), eq(repairPrices.active, true)))
+      .limit(1);
+    if (!customPrice) throw new AppError(422, ErrorCode.VALIDATION_ERROR, 'Suggested pricing is unavailable for this repair. Choose a supported repair.');
+    if (input.customPartName?.trim()) throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Custom part names are only allowed for Others.');
+    repair = { issueType: input.issueType, customPartName: undefined, label: customPrice.category };
+  }
   const [catalogDevice] = await db.select().from(deviceModels).where(eq(deviceModels.id,input.deviceModelId)).limit(1);
   // A manually entered device has a client-generated UUID and no catalog row.
   // Keep its brand/model in the quote snapshot and send it to Bedrock so the
@@ -74,13 +88,14 @@ export async function getDatasetQuote(input: {
   if ((input.deviceBrand && input.deviceBrand !== row.device.brand) || (input.deviceModel && input.deviceModel !== row.device.modelName)) {
     throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'The device details do not match the selected catalog model. Please select your device again.');
   }
-  const snapshot = { ...row.price.snapshot, pricingSource:'dataset' as const, deviceModelId: row.device.id, deviceBrand: row.device.brand, deviceModel: row.device.modelName };
+  const pricingSource = row.price.isAdminOverride ? 'admin' as const : 'dataset' as const;
+  const snapshot = { ...row.price.snapshot, pricingSource, deviceModelId: row.device.id, deviceBrand: row.device.brand, deviceModel: row.device.modelName };
   return {
     ...snapshot,
     minPriceCents: row.price.suggestedPriceCents,
     suggestedPriceCents: row.price.suggestedPriceCents,
     suggestedOfferCents: row.price.suggestedPriceCents,
-    source: 'dataset' as const,
+    source: pricingSource,
     priceSnapshot: snapshot,
   };
 }

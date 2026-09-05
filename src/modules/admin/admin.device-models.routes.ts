@@ -9,6 +9,14 @@ import {
   updateDeviceModel,
   deleteDeviceModel,
 } from './admin.device-models.service.js';
+import {
+  repairPriceInputSchema,
+  listDeviceModelPrices,
+  createDeviceModelPrice,
+  updateDeviceModelPrice,
+  deactivateDeviceModelPrice,
+  resetDeviceModelPrice,
+} from './admin.repair-prices.service.js';
 
 const deviceModelsRoutes: FastifyPluginAsync = async (fastify) => {
   const auth = [fastify.authenticate, requireUserType('ADMIN')];
@@ -58,6 +66,61 @@ const deviceModelsRoutes: FastifyPluginAsync = async (fastify) => {
       const model = await updateDeviceModel(id, body);
       await logAudit(req.user!.userId, `Updated device model ${id}`, 'settings', id);
       return reply.send(successResponse(model));
+    },
+  });
+
+  fastify.get('/admin/device-models/:id/prices', {
+    preHandler: auth,
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      return reply.send(successResponse(await listDeviceModelPrices(id)));
+    },
+  });
+
+  fastify.post('/admin/device-models/:id/prices', {
+    preHandler: auth,
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = repairPriceInputSchema.parse(req.body);
+      const price = await createDeviceModelPrice(id, body, req.user!.userId);
+      await logAudit(req.user!.userId, `Added repair price ${price.category}`, 'settings', id, JSON.stringify({ issueType: price.issueType, suggestedPriceCents: price.suggestedPriceCents }));
+      return reply.status(201).send(successResponse(price));
+    },
+  });
+
+  fastify.patch('/admin/device-models/:id/prices/:issueType', {
+    preHandler: auth,
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    handler: async (req, reply) => {
+      const { id, issueType } = req.params as { id: string; issueType: string };
+      const body = repairPriceInputSchema.parse({ ...(req.body as object), issueType });
+      const price = await updateDeviceModelPrice(id, issueType, body, req.user!.userId);
+      await logAudit(req.user!.userId, `Updated repair price ${price.category}`, 'settings', id, JSON.stringify({ issueType: price.issueType, suggestedPriceCents: price.suggestedPriceCents }));
+      return reply.send(successResponse(price));
+    },
+  });
+
+  fastify.post('/admin/device-models/:id/prices/:issueType/reset', {
+    preHandler: auth,
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    handler: async (req, reply) => {
+      const { id, issueType } = req.params as { id: string; issueType: string };
+      const price = await resetDeviceModelPrice(id, issueType);
+      await logAudit(req.user!.userId, `Reset repair price ${issueType} to catalog`, 'settings', id);
+      return reply.send(successResponse(price));
+    },
+  });
+
+  fastify.delete('/admin/device-models/:id/prices/:issueType', {
+    preHandler: auth,
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    handler: async (req, reply) => {
+      const { id, issueType } = req.params as { id: string; issueType: string };
+      const price = await deactivateDeviceModelPrice(id, issueType, req.user!.userId);
+      await logAudit(req.user!.userId, `Disabled repair price ${issueType}`, 'settings', id);
+      return reply.send(successResponse(price));
     },
   });
 

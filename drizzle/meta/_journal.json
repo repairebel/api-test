@@ -16,7 +16,26 @@
       "tag": "0001_dataset_suggested_prices",
       "breakpoints": true
     },
-    {"idx":2,"version":"7","when":1788598800000,"tag":"0002_generated_repair_quotes","breakpoints":true},
-    {"idx":3,"version":"7","when":1788602400000,"tag":"0003_single_shop_session","breakpoints":true}
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788598800000,
+      "tag": "0002_generated_repair_quotes",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788602400000,
+      "tag": "0003_single_shop_session",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788609203412,
+      "tag": "0004_admin_pricing_overrides",
+      "breakpoints": true
+    }
   ]
 }

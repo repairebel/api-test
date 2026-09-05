@@ -8,6 +8,7 @@ import {
   pgEnum,
   unique,
   index,
+  boolean,
 } from 'drizzle-orm/pg-core';
 
 export const inventoryMovementTypeEnum = pgEnum('inventory_movement_type', [
@@ -26,6 +27,8 @@ export const deviceModels = pgTable('device_models', {
   deviceType: varchar('device_type', { length: 50 }).notNull().default('Smartphone'),
   modelName: varchar('model_name', { length: 255 }).notNull(),
   modelNumber: varchar('model_number', { length: 150 }),
+  // Admin edits are preserved when the bundled harvested catalog is re-seeded.
+  isAdminOverride: boolean('is_admin_override').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   unique('device_models_brand_model_name_key').on(t.brand, t.modelName),

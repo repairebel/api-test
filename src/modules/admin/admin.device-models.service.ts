@@ -3,6 +3,13 @@ import { db } from '../../db/client.js';
 import { deviceModels } from '../../db/schema/index.js';
 import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 
+function cleanModelValue(value: string | undefined, field: string, max: number) {
+  if (value === undefined) return undefined;
+  const cleaned = value.trim().replace(/\s+/gu, ' ');
+  if (!cleaned || cleaned.length > max) throw new AppError(400, ErrorCode.VALIDATION_ERROR, `${field} is required and must be ${max} characters or fewer`);
+  return cleaned;
+}
+
 interface ListDeviceModelsQuery {
   page?: number;
   limit?: number;
@@ -55,7 +62,14 @@ export async function createDeviceModel(data: {
   modelName: string;
   modelNumber?: string;
 }) {
-  const [model] = await db.insert(deviceModels).values(data).returning();
+  const values = {
+    brand: cleanModelValue(data.brand, 'Brand', 100)!,
+    deviceType: cleanModelValue(data.deviceType, 'Device type', 50)!,
+    modelName: cleanModelValue(data.modelName, 'Model name', 255)!,
+    modelNumber: data.modelNumber ? cleanModelValue(data.modelNumber, 'Model number', 150) : undefined,
+    isAdminOverride: true,
+  };
+  const [model] = await db.insert(deviceModels).values(values).returning();
   return { ...model, createdAt: model.createdAt?.toISOString() ?? null };
 }
 
@@ -66,9 +80,17 @@ export async function updateDeviceModel(
   const [existing] = await db.select({ id: deviceModels.id }).from(deviceModels).where(eq(deviceModels.id, modelId)).limit(1);
   if (!existing) throw new AppError(404, ErrorCode.NOT_FOUND, 'Device model not found');
 
+  const update = {
+    ...(data.brand !== undefined ? { brand: cleanModelValue(data.brand, 'Brand', 100) } : {}),
+    ...(data.deviceType !== undefined ? { deviceType: cleanModelValue(data.deviceType, 'Device type', 50) } : {}),
+    ...(data.modelName !== undefined ? { modelName: cleanModelValue(data.modelName, 'Model name', 255) } : {}),
+    ...(data.modelNumber !== undefined ? { modelNumber: cleanModelValue(data.modelNumber, 'Model number', 150) } : {}),
+    isAdminOverride: true,
+  };
+  if (Object.keys(update).length === 1) throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Provide at least one model field to update');
   const [model] = await db
     .update(deviceModels)
-    .set(data)
+    .set(update)
     .where(eq(deviceModels.id, modelId))
     .returning();
 

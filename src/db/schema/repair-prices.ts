@@ -10,10 +10,12 @@ export const repairPriceSources = pgTable('repair_price_sources', {
 }, (t) => [primaryKey({ columns: [t.catalogVersion, t.sourceId] })]);
 
 export interface PriceSnapshot {
-  pricingSource?: 'dataset' | 'bedrock' | 'fallback';
+  pricingSource?: 'dataset' | 'admin' | 'bedrock' | 'fallback';
   customPartName?: string;
   modelId?: string;
   promptVersion?: string;
+  adminUserId?: string;
+  active?: boolean;
   expiresAt?: string;
   catalogVersion: string;
   currency: 'USD';
@@ -50,6 +52,9 @@ export const repairPrices = pgTable('repair_prices', {
   suggestedPriceCents: integer('suggested_price_cents').notNull(),
   catalogVersion: varchar('catalog_version', { length: 100 }).notNull(),
   active: boolean('active').notNull().default(true),
+  // Admin-managed prices survive catalog imports and are explicitly visible to
+  // operators in the admin panel.
+  isAdminOverride: boolean('is_admin_override').notNull().default(false),
   snapshot: jsonb('snapshot').$type<PriceSnapshot>().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
