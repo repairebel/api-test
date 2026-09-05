@@ -1,0 +1,62 @@
+{
+  "name": "repairrebel-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc && node scripts/copy-catalog.mjs",
+    "start": "node dist/index.js",
+    "db:generate": "npm run build && drizzle-kit generate",
+    "db:migrate": "tsx src/scripts/setup-db.ts --migrate-only",
+    "db:seed": "tsx src/scripts/setup-db.ts --seed-only",
+    "db:setup": "tsx src/scripts/setup-db.ts",
+    "db:push": "npm run build && drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:dump:schema": "tsx src/scripts/dump-db.ts --schema-only",
+    "db:dump:data": "tsx src/scripts/dump-db.ts --data-only",
+    "db:dump": "tsx src/scripts/dump-db.ts",
+    "db:test:setup": "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/repairebeltest tsx src/scripts/setup-db.ts --reset",
+    "dev:test": "node scripts/test-runtime.mjs dev",
+    "db:test:pricing:setup": "node scripts/test-runtime.mjs setup && node scripts/test-runtime.mjs import",
+    "db:pricing:check": "tsx src/scripts/import-repair-prices.ts",
+    "db:pricing:import": "tsx src/scripts/import-repair-prices.ts --apply --migrate",
+    "test:pricing": "node scripts/test-runtime.mjs test"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@fastify/helmet": "^13.0.0",
+    "@fastify/rate-limit": "^10.2.0",
+    "@fastify/sensible": "^6.0.3",
+    "argon2": "^0.41.1",
+    "bullmq": "^5.70.1",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.38.4",
+    "expo-server-sdk": "^6.0.0",
+    "fastify": "^5.2.1",
+    "fastify-plugin": "^5.0.1",
+    "ioredis": "^5.4.2",
+    "jsonwebtoken": "^9.0.2",
+    "nanoid": "^5.0.9",
+    "nodemailer": "^8.0.1",
+    "openai": "^6.25.0",
+    "pg": "^8.13.1",
+    "pino-pretty": "^13.0.0",
+    "socket.io": "^4.8.3",
+    "stripe": "^20.4.0",
+    "tz-lookup": "^6.1.25",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.12.0",
+    "@types/nodemailer": "^7.0.11",
+    "@types/pg": "^8.11.11",
+    "drizzle-kit": "^0.30.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}
