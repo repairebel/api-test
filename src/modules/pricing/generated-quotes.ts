@@ -66,7 +66,10 @@ export async function getGeneratedQuote(device: {id:string;brand:string;modelNam
       pricingSource = 'fallback';
     }
     if (!price) throw new AppError(422, ErrorCode.VALIDATION_ERROR, 'This part could not be estimated for the selected device. Choose another issue or enter a more specific part name.');
-    const expiresAt = new Date(Date.now()+24*60*60*1000).toISOString();
+    // Retry a fallback frequently so a temporary Bedrock throttle does not
+    // pin a customer to the catalog estimate for a full day.
+    const ttlMs = pricingSource === 'fallback' ? 15 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const expiresAt = new Date(Date.now()+ttlMs).toISOString();
     const snapshot: PriceSnapshot = {
       catalogVersion:createHash('sha256').update(key+randomUUID()).digest('hex'),
       currency:'USD',deviceModelId:device.id,deviceBrand:device.brand,deviceModel:device.modelName,
