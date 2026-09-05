@@ -603,6 +603,7 @@ export async function acceptOffer(offerId: string, customerId: string) {
           offerId: offer.id,
           requestId: request.id,
           shopId: offer.shopId,
+          customerId,
           customerName: request.customerName,
         };
 
@@ -618,7 +619,7 @@ export async function acceptOffer(offerId: string, customerId: string) {
             confirm: true,
             automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
             metadata: piMetadata,
-          });
+          }, { idempotencyKey: `offer-${offer.id}-authorization` });
           stripePaymentIntentId = paymentIntent.id;
         } catch (piErr: any) {
           if (piErr.code === 'authentication_required') {
@@ -632,7 +633,7 @@ export async function acceptOffer(offerId: string, customerId: string) {
               confirm: true,
               automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
               metadata: piMetadata,
-            });
+            }, { idempotencyKey: `offer-${offer.id}-authentication` });
             stripePaymentIntentId = onSessionPi.id;
             paymentClientSecret = onSessionPi.client_secret;
             requiresAction = onSessionPi.status === 'requires_action';
@@ -846,7 +847,45 @@ export async function confirmOfferPayment(
 
   const Stripe = (await import('stripe')).default;
   const stripe = new Stripe(env.STRIPE_SECRET_KEY);
+
+  // Resolve the offer and customer before touching the client-supplied
+  // PaymentIntent. This prevents a caller from presenting a valid Stripe
+  // PaymentIntent belonging to another customer or another offer.
+  const [expectedOffer] = await db
+    .select({ requestId: offers.requestId, priceCents: offers.priceCents, shopId: offers.shopId })
+    .from(offers)
+    .where(eq(offers.id, offerId))
+    .limit(1);
+  if (!expectedOffer) {
+    throw new AppError(404, ErrorCode.NOT_FOUND, 'Offer not found');
+  }
+
+  const [expectedRequest] = await db
+    .select({ customerId: requests.customerId })
+    .from(requests)
+    .where(eq(requests.id, expectedOffer.requestId))
+    .limit(1);
+  if (!expectedRequest || expectedRequest.customerId !== customerId) {
+    throw new AppError(403, ErrorCode.FORBIDDEN, 'Not your request');
+  }
+
+  const expectedStripeCustomerId = await ensureStripeCustomerForUser(stripe, customerId);
   const pi = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
+
+  const paymentIntentCustomerId =
+    typeof pi.customer === 'string' ? pi.customer : pi.customer?.id ?? null;
+  if (
+    paymentIntentCustomerId !== expectedStripeCustomerId ||
+    pi.metadata?.offerId !== offerId ||
+    pi.metadata?.requestId !== expectedOffer.requestId ||
+    (pi.metadata?.customerId && pi.metadata.customerId !== customerId) ||
+    pi.metadata?.shopId !== expectedOffer.shopId ||
+    pi.amount !== expectedOffer.priceCents ||
+    pi.currency !== 'usd' ||
+    pi.capture_method !== 'manual'
+  ) {
+    throw new AppError(403, ErrorCode.FORBIDDEN, 'Payment verification does not match this offer');
+  }
 
   // If 3DS still pending
   if (pi.status === 'requires_action') {
@@ -1547,15 +1586,42 @@ export async function updateJobPaymentMethod(jobId: string, customerId: string) 
       const Stripe = (await import('stripe')).default;
       const stripe = new Stripe(env.STRIPE_SECRET_KEY);
 
+      const stripeCustomerId = await ensureStripeCustomerForUser(stripe, customerId);
+      const stripeCustomer = await stripe.customers.retrieve(stripeCustomerId);
+      if (stripeCustomer.deleted) {
+        throw new AppError(400, ErrorCode.VALIDATION_ERROR,
+          'Your payment profile was removed. Please add a new card in Settings → Payment Methods.');
+      }
+
+      const defaultPmId = (stripeCustomer as any).invoice_settings?.default_payment_method ?? null;
+      let paymentMethodId = typeof defaultPmId === 'string' ? defaultPmId : null;
+      if (!paymentMethodId) {
+        const pms = await stripe.paymentMethods.list({
+          customer: stripeCustomerId,
+          type: 'card',
+          limit: 1,
+        });
+        paymentMethodId = pms.data[0]?.id ?? null;
+      }
+      if (!paymentMethodId) {
+        throw new AppError(400, ErrorCode.VALIDATION_ERROR,
+          'No payment method on file. Please add a card in Settings → Payment Methods.');
+      }
+
       const pi = await stripe.paymentIntents.create({
         amount: job.priceCents,
         currency: 'usd',
         capture_method: 'manual',
-        payment_method: 'pm_card_visa',
+        customer: stripeCustomerId,
+        payment_method: paymentMethodId,
+        off_session: true,
         confirm: true,
         automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
         metadata: {
           jobId: job.id,
+          customerId,
+          requestId: job.requestId,
+          offerId: job.offerId,
           shopId: job.shopId,
           customerName: job.customerName,
           retryPayment: 'true',

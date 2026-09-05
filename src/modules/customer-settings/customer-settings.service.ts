@@ -459,6 +459,10 @@ export async function deletePaymentMethod(userId: string, pmId: string) {
 export async function setDefaultPaymentMethod(userId: string, pmId: string) {
   const stripe = await getStripe();
   const customerId = await ensureStripeCustomerForUser(stripe, userId);
+  const paymentMethod = await stripe.paymentMethods.retrieve(pmId);
+  if (paymentMethod.customer !== customerId) {
+    throw new AppError(403, ErrorCode.FORBIDDEN, 'Payment method does not belong to you');
+  }
   await stripe.customers.update(customerId, {
     invoice_settings: { default_payment_method: pmId },
   });

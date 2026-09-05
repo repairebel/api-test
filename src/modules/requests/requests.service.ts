@@ -14,6 +14,7 @@ import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 import { getIO } from '../../lib/socket.js';
 import { notifyShop, notifyCustomer } from '../../lib/notify.js';
 import { env } from '../../config/env.js';
+import { ensureStripeCustomerForUser } from '../../lib/stripe-customers.js';
 import { describeRepair, getDatasetQuote, assertCustomerPrice } from '../pricing/pricing.service.js';
 
 async function notifyExpiredDispatches(
@@ -567,17 +568,39 @@ export async function customerAcceptOffer(offerId: string) {
         const Stripe = (await import('stripe')).default;
         const stripe = new Stripe(env.STRIPE_SECRET_KEY);
 
+        const stripeCustomerId = await ensureStripeCustomerForUser(stripe, request.customerId);
+        const stripeCustomer = await stripe.customers.retrieve(stripeCustomerId);
+        if (stripeCustomer.deleted) {
+          throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Customer Stripe profile is unavailable');
+        }
+        const defaultPmId = (stripeCustomer as any).invoice_settings?.default_payment_method ?? null;
+        let paymentMethodId = typeof defaultPmId === 'string' ? defaultPmId : null;
+        if (!paymentMethodId) {
+          const pms = await stripe.paymentMethods.list({
+            customer: stripeCustomerId,
+            type: 'card',
+            limit: 1,
+          });
+          paymentMethodId = pms.data[0]?.id ?? null;
+        }
+        if (!paymentMethodId) {
+          throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Customer has no saved card');
+        }
+
         const piParams: any = {
           amount: offer.priceCents,
           currency: 'usd',
           capture_method: 'manual', // authorize only, capture later
-          payment_method: 'pm_card_visa', // test card
+          customer: stripeCustomerId,
+          payment_method: paymentMethodId,
+          off_session: true,
           confirm: true, // immediately confirm
           automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
           metadata: {
             offerId: offer.id,
             requestId: request.id,
             shopId: offer.shopId,
+            customerId: request.customerId,
             customerName: request.customerName,
           },
         };
