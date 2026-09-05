@@ -12,8 +12,10 @@ export const bedrockPriceProvider = { predict: predictBedrockPrice };
 // outage/rate limit. It is derived only from the harvested catalog and uses
 // the same required floor formula; the snapshot clearly identifies it as a
 // fallback so it can be replaced by Bedrock after the cache expires.
-function fallbackPartsCost(rows: Array<{ parts_cost: string | number }>, issueType: string): number {
-  const costs = rows.map((row) => Number(row.parts_cost)).filter((value) => Number.isFinite(value) && value > 0);
+function fallbackPartsCost(rows: Array<{ parts_cost: string | number; issue_type?: string }>, issueType: string): number {
+  const matchingRows = rows.filter((row) => row.issue_type === issueType);
+  const sourceRows = matchingRows.length > 0 ? matchingRows : rows;
+  const costs = sourceRows.map((row) => Number(row.parts_cost)).filter((value) => Number.isFinite(value) && value > 0);
   const defaults: Record<string, number> = {
     SCREEN: 55, INNER_SCREEN: 120, OUTER_SCREEN: 70, BATTERY: 28,
     CHARGING_PORT: 24, FRONT_CAMERA: 38, REAR_CAMERA: 65,
