@@ -55,8 +55,9 @@ export async function getDatasetQuote(input: {
     .where(and(eq(repairPrices.deviceModelId, input.deviceModelId), eq(repairPrices.issueType, input.issueType), eq(repairPrices.active, true))).limit(1);
   if (!row) {
     const snapshot = await getGeneratedQuote(device,repair);
+    const source = snapshot.pricingSource === 'fallback' ? 'fallback' as const : 'bedrock' as const;
     return {...snapshot,minPriceCents:snapshot.suggestedPriceCents,suggestedOfferCents:snapshot.suggestedPriceCents,
-      source:'bedrock' as const,priceSnapshot:snapshot};
+      source,priceSnapshot:snapshot};
   }
   // Do not let a cheap model ID be submitted with a different, more expensive device label.
   if ((input.deviceBrand && input.deviceBrand !== row.device.brand) || (input.deviceModel && input.deviceModel !== row.device.modelName)) {

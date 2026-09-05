@@ -10,7 +10,7 @@ export const repairPriceSources = pgTable('repair_price_sources', {
 }, (t) => [primaryKey({ columns: [t.catalogVersion, t.sourceId] })]);
 
 export interface PriceSnapshot {
-  pricingSource?: 'dataset' | 'bedrock';
+  pricingSource?: 'dataset' | 'bedrock' | 'fallback';
   customPartName?: string;
   modelId?: string;
   promptVersion?: string;
