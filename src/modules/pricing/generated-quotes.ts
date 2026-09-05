@@ -37,13 +37,17 @@ export async function getGeneratedQuote(device: {id:string;brand:string;modelNam
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const cached = await client.query('SELECT snapshot FROM generated_repair_quotes WHERE cache_key=$1 AND expires_at>now()',[key]);
+    const cached = await client.query(`SELECT snapshot FROM generated_repair_quotes
+      WHERE cache_key=$1 AND expires_at>now()
+        AND ((snapshot->>'pricingSource') IS DISTINCT FROM 'fallback' OR created_at>now()-interval '15 minutes')`,[key]);
     if (cached.rows[0]) { await client.query('COMMIT'); return cached.rows[0].snapshot; }
     // Only one process may generate this device/part price at a time. Do not hold
     // additional connections waiting for a slow upstream model.
     const lock = await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',[key]);
     if (!lock.rows[0].acquired) throw new AppError(503, ErrorCode.CONFLICT, 'This suggested price is being prepared. Please try again shortly.');
-    const recheck = await client.query('SELECT snapshot FROM generated_repair_quotes WHERE cache_key=$1 AND expires_at>now()',[key]);
+    const recheck = await client.query(`SELECT snapshot FROM generated_repair_quotes
+      WHERE cache_key=$1 AND expires_at>now()
+        AND ((snapshot->>'pricingSource') IS DISTINCT FROM 'fallback' OR created_at>now()-interval '15 minutes')`,[key]);
     if (recheck.rows[0]) { await client.query('COMMIT'); return recheck.rows[0].snapshot; }
     const references = await client.query(`SELECT d.brand,d.model_name,p.issue_type,p.parts_cost
       FROM repair_prices p JOIN device_models d ON d.id=p.device_model_id
