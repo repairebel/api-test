@@ -1,5 +1,8 @@
 # Dataset suggested pricing
 
+For Railway deployment, see `RAILWAY.md`. The compiled pre-deploy setup seeds
+this catalog directly and does not require `database-seed.sql`.
+
 This change belongs to `Repairebel-Server -test`, `Repairebel-Customer`, and
 `Repairebel-Store`. The main server checkout is unchanged. No production deployment
 or migration is part of this work.
@@ -28,20 +31,21 @@ contact suppliers, send messages, run queue workers, or invoke payment APIs.
 
 ## Price policy
 
-- Use the workbook's parts median, its markup, and its labor tiers; apply positive
-  Excel whole-dollar rounding, then return integer cents.
-- Formula: `ROUND(parts cost × markup + labor fee, 0) × 100`.
+- Use the corrected workbook's parts median, a 2x multiplier and fixed $30 labor.
+- Formula: `ROUNDUP(parts cost × 2 + 30, 2) × 100`. Always round upward to cents.
 - Normalized duplicate rows use an unweighted median of eligible source-row
-  medians. If corrected labels merge different labor tiers, use the highest
-  recorded labor fee. Markups must agree. These decisions are saved in the snapshot.
+  medians per individual device and repair variant. Every row must use 2x markup
+  and $30 labor. These decisions are saved in the snapshot.
 - No brand-wide inventory fallback or arbitrary baseline is used for new requests.
   An unsupported model/repair combination returns 422 and cannot be posted.
 - All prices are treated as USD, matching the existing apps. The workbook itself
   does not specify a currency code.
 
-The imported source has 8,513 rows. The reviewed interpretation publishes 3,108
-models and 5,036 model/repair prices using 7,918 eligible source rows. The other
-595 rows remain in the source archive with exclusion reasons. See
+The original source has 8,513 rows. The corrected workbook publishes 2,639
+device/hardware variants and 5,543 model/repair prices using 7,653 eligible source rows.
+The other 860 rows remain in its Needs Review sheet with reasons. Brand, device
+family, individual model, hardware variant and parts category are separate fields.
+The database JSON is read back from the corrected Excel workbook. See
 `src/modules/pricing/CATALOG.md` for normalization rules, repair variants,
 compatibility handling, limitations, and reproducible extraction commands.
 

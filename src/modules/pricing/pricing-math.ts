@@ -1,4 +1,4 @@
-/** Excel ROUND for positive USD prices, using decimal integers at four places. */
+/** Excel ROUNDUP to cents for positive USD prices, using decimal integers. */
 export function calculateSuggestedPriceCents(partsCost: number, markup: number, laborFeeCents: number): number {
   if (!Number.isFinite(partsCost) || partsCost < 0 || !Number.isFinite(markup) || markup <= 0 ||
       !Number.isSafeInteger(laborFeeCents) || laborFeeCents < 0) {
@@ -7,7 +7,7 @@ export function calculateSuggestedPriceCents(partsCost: number, markup: number, 
   const parts = BigInt(Math.round(partsCost * 10000));
   const multiplier = BigInt(Math.round(markup * 10000));
   const total = parts * multiplier + BigInt(laborFeeCents) * 1000000n;
-  const cents = Number(((total + 50000000n) / 100000000n) * 100n);
+  const cents = Number((total + 999999n) / 1000000n);
   if (!Number.isSafeInteger(cents) || cents <= 0 || cents > 2147483647) {
     throw new Error('Suggested price is outside the supported range');
   }

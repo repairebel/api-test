@@ -191,7 +191,9 @@ describe('dataset pricing through authenticated customer and store APIs', { conc
     assert.ok(screen);
     assert.equal(screen.suggestedPriceCents, quote.suggestedPriceCents);
     assert.equal(quote.source, 'dataset');
-    assert.equal(quote.suggestedPriceCents, Math.round(quote.partsCost * quote.markupMultiplier + quote.laborFeeCents / 100) * 100);
+    assert.equal(quote.markupMultiplier, 2);
+    assert.equal(quote.laborFeeCents, 3000);
+    assert.equal(quote.suggestedPriceCents, Math.ceil((quote.partsCost * 2 + 30) * 100 - 1e-8));
     assert.equal(quote.minPriceCents, quote.suggestedPriceCents);
     assert.equal(quote.suggestedOfferCents, quote.suggestedPriceCents);
     assert.equal(quote.priceSnapshot.suggestedPriceCents, quote.suggestedPriceCents);

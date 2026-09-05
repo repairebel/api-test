@@ -2,6 +2,9 @@
 
 The backend API for the RepairRebel platform, built with Fastify, TypeScript, and Drizzle ORM.
 
+For deployment, use [RAILWAY.md](RAILWAY.md). Railway setup uses the bundled dataset;
+no local SQL dump is required. Migrations and seeds run in the pre-deploy step.
+
 For the dataset suggested-price implementation, test database import, and isolated
 local API on port 6065, use [PRICING_IMPLEMENTATION.md](PRICING_IMPLEMENTATION.md).
 The ordinary `.env` shares a Redis service with the main server; use `npm run dev:test`
@@ -82,7 +85,10 @@ OPENAI_API_KEY=
 
 ### 3. Database Setup And Migrations
 
-The project now uses a clean Drizzle baseline migration in `drizzle/` plus an automated setup script that can create the database, run migrations, and seed the baseline catalog from the checked-in SQL dump.
+The setup script applies the Drizzle migrations in `drizzle/`, inserts missing
+default settings, and imports the bundled supplier catalog with its suggested
+prices. It does not read local SQL dumps. Railway runs the compiled `db:deploy`
+command before starting the API; see [RAILWAY.md](RAILWAY.md).
 
 ```bash
 # Create the database if needed, run migrations, and seed system settings + device models

@@ -1,11 +1,12 @@
 {
-  "$schema": "https://railway.app/railway.schema.json",
+  "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS",
-    "buildCommand": "npm install --legacy-peer-deps && npm run build"
+    "builder": "RAILPACK",
+    "buildCommand": "npm ci --include=dev --legacy-peer-deps && npm run build"
   },
   "deploy": {
-    "startCommand": "npm run db:setup -- --no-create && npm start",
+    "preDeployCommand": ["npm run db:deploy"],
+    "startCommand": "npm start",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "healthcheckPath": "/health",

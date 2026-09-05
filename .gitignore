@@ -24,6 +24,7 @@ yarn-error.*
 # TypeScript
 *.tsbuildinfo
 __pycache__/
+outputs/
 
 # Secrets / local files
 .env
@@ -42,8 +43,7 @@ Archive.zip
 
 # Database dumps / seeds
 database-seed.sql
-*seed*.sql
-*.sql
+database-schema.sql
 
 # Archives
 Archive.zip

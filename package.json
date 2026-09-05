@@ -14,6 +14,8 @@
     "db:migrate": "tsx src/scripts/setup-db.ts --migrate-only",
     "db:seed": "tsx src/scripts/setup-db.ts --seed-only",
     "db:setup": "tsx src/scripts/setup-db.ts",
+    "db:deploy": "node dist/scripts/setup-db.js --no-create",
+    "test:deploy": "npm run build && node --test test/railway-setup.test.mjs",
     "db:push": "npm run build && drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:dump:schema": "tsx src/scripts/dump-db.ts --schema-only",
@@ -21,7 +23,7 @@
     "db:dump": "tsx src/scripts/dump-db.ts",
     "db:test:setup": "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/repairebeltest tsx src/scripts/setup-db.ts --reset",
     "dev:test": "node scripts/test-runtime.mjs dev",
-    "db:test:pricing:setup": "node scripts/test-runtime.mjs setup && node scripts/test-runtime.mjs import",
+    "db:test:pricing:setup": "node scripts/test-runtime.mjs setup",
     "db:pricing:check": "tsx src/scripts/import-repair-prices.ts",
     "db:pricing:import": "tsx src/scripts/import-repair-prices.ts --apply --migrate",
     "test:pricing": "node scripts/test-runtime.mjs test"

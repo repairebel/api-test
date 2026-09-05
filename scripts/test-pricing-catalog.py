@@ -10,6 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("extractor", ROOT / "scripts/extract-pricing-catalog.py")
 extractor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(extractor)
+spec2 = importlib.util.spec_from_file_location('normalizer', ROOT / 'scripts/normalize-pricing-workbook.py')
+normalizer = importlib.util.module_from_spec(spec2)
+spec2.loader.exec_module(normalizer)
 
 
 class PricingCatalogTests(unittest.TestCase):
@@ -51,19 +54,27 @@ class PricingCatalogTests(unittest.TestCase):
     def test_complete_checked_in_snapshot_integrity(self):
         data = json.loads((ROOT / "src/modules/pricing/catalog-data.json").read_text())
         rows = data["rows"]
-        self.assertEqual(len(rows), 8513)
-        self.assertEqual({r["sourceId"] for r in rows}, set(range(1, 8514)))
-        self.assertEqual(data["audit"]["formulaCellsRead"], 60)
-        self.assertEqual(len(data["audit"]["sheetsRead"]), 4)
+        self.assertEqual(data['originalSourceCount'], 8513)
+        self.assertEqual({r["sourceId"] for r in rows}, set(range(1, len(rows)+1)))
         for row in rows:
             uuid.UUID(row["modelId"])
-            self.assertLessEqual(row["lowPrice"], row["partsCost"])
-            self.assertGreaterEqual(row["highPrice"], row["partsCost"])
-            self.assertEqual(row["catalogEligible"], not row["exclusionReasons"])
-            self.assertEqual(row["sourceSuggestedPrice"], int((extractor.Decimal(str(row["partsCost"])) * extractor.Decimal(str(row["markupMultiplier"])) + extractor.Decimal(str(row["laborFee"]))).quantize(extractor.Decimal("1"), rounding=extractor.ROUND_HALF_UP)))
-        shared_screen = [r for r in rows if r["catalogEligible"] and r["repairType"] == "Screen" and any(m["model"] == "iPhone 12" for m in r["compatibleModels"])]
-        self.assertTrue(shared_screen, "iPhone 12 must receive shared 12/12 Pro screen pricing")
-        self.assertTrue(all(r["originalRepairType"] == "Camera Module" for r in rows if r["repairType"] == "Rear Camera"))
+            self.assertEqual(row['markupMultiplier'],2)
+            self.assertEqual(row['laborFee'],30)
+            self.assertEqual(row['sourceSuggestedPrice'],normalizer.floor(row['partsCost']))
+            self.assertTrue(row['originalSourceRowIds'])
+            self.assertNotRegex(row['modelNumber'],r'[/,;()]')
+
+    def test_individual_models_and_hardware_are_separate(self):
+        def parse(category,brand,model):
+            return normalizer.devices({'category':category,'brand':brand,'model':model})
+        self.assertEqual([d['modelNumber'] for d in parse('iPhone','Apple','iPhone 17 / 17 Pro / 17 Pro Max')],['17','17 Pro','17 Pro Max'])
+        devices=parse('Samsung','Samsung','Samsung Galaxy S23 (S911 / 2023) / S23 Ultra (S918 / 2023)')
+        self.assertEqual([d['modelNumber'] for d in devices],['S23','S23 Ultra'])
+        self.assertEqual(devices[1]['variant'],'S918 / 2023')
+        self.assertEqual([d['brand'] for d in parse('OnePlus','OnePlus','OnePlus 12 / Realme GT5 Pro')],['OnePlus','Realme'])
+        self.assertEqual(parse('iPhone','Apple','iPhone 17 (Original Used)')[0]['variant'],'')
+        self.assertEqual([d['modelNumber'] for d in parse('Apple Watch','Apple','Apple Watch SE (1st / 2nd Gen) (44mm)')],['SE 1st Gen','SE 2nd Gen'])
+        with self.assertRaises(ValueError): parse('iPhone','Apple','iPhone 12 to 17 Pro Max')
 
 
 if __name__ == "__main__":

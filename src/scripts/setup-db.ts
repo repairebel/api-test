@@ -1,35 +1,24 @@
 import 'dotenv/config';
 
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { sql } from 'drizzle-orm';
 
-import { deviceModels } from '../db/schema/inventory.js';
+import { seedPricingCatalog } from '../db/seed-pricing.js';
 import { systemSettings } from '../db/schema/system-settings.js';
 import { getPgConnectionConfig } from '../lib/postgres-config.js';
 
 const { Client, Pool } = pg;
 
 const SYSTEM_SETTINGS_ID = '00000000-0000-0000-0000-000000000001';
-const DEVICE_MODEL_INSERT_PREFIX = 'INSERT INTO public.device_models VALUES (';
 
 type Flags = {
   migrateOnly: boolean;
   seedOnly: boolean;
   reset: boolean;
   noCreate: boolean;
-};
-
-type DeviceModelSeed = {
-  brand: string;
-  deviceType: string;
-  modelName: string;
-  modelNumber: string | null;
-  createdAt: Date;
 };
 
 function parseFlags(argv: string[]): Flags {
@@ -126,95 +115,6 @@ async function ensurePostgresPrereqs(pool: pg.Pool) {
   await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
 }
 
-function parseSqlTuple(tuple: string): Array<string | null> {
-  const values: Array<string | null> = [];
-  let current = '';
-  let inString = false;
-
-  for (let i = 0; i < tuple.length; i += 1) {
-    const char = tuple[i]!;
-
-    if (inString) {
-      if (char === "'") {
-        if (tuple[i + 1] === "'") {
-          current += "'";
-          i += 1;
-        } else {
-          inString = false;
-        }
-      } else {
-        current += char;
-      }
-      continue;
-    }
-
-    if (char === "'") {
-      inString = true;
-      continue;
-    }
-
-    if (char === ',') {
-      const raw = current.trim();
-      values.push(raw === 'NULL' ? null : raw);
-      current = '';
-      continue;
-    }
-
-    current += char;
-  }
-
-  const raw = current.trim();
-  values.push(raw === 'NULL' ? null : raw);
-  return values;
-}
-
-async function loadDeviceModelsFromDump(seedFilePath: string): Promise<DeviceModelSeed[]> {
-  const contents = await fs.readFile(seedFilePath, 'utf8');
-  const seeds: DeviceModelSeed[] = [];
-
-  for (const line of contents.split('\n')) {
-    if (!line.startsWith(DEVICE_MODEL_INSERT_PREFIX)) continue;
-
-    const tuple = line.slice(
-      DEVICE_MODEL_INSERT_PREFIX.length,
-      line.length - 2,
-    );
-    const values = parseSqlTuple(tuple);
-
-    if (values.length !== 6) {
-      throw new Error(`Unexpected device_models seed row format: ${line}`);
-    }
-
-    const [, brand, modelName, modelNumber, createdAt, deviceType] = values;
-
-    if (!brand || !modelName || !createdAt || !deviceType) {
-      throw new Error(`Incomplete device_models seed row: ${line}`);
-    }
-
-    seeds.push({
-      brand,
-      modelName,
-      modelNumber,
-      deviceType,
-      createdAt: new Date(createdAt),
-    });
-  }
-
-  if (seeds.length === 0) {
-    throw new Error(`No device_models rows found in ${seedFilePath}`);
-  }
-
-  return seeds;
-}
-
-function chunk<T>(items: T[], size: number) {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-  return chunks;
-}
-
 async function seedSystemSettings(db: ReturnType<typeof drizzle>) {
   await db
     .insert(systemSettings)
@@ -233,30 +133,6 @@ async function seedSystemSettings(db: ReturnType<typeof drizzle>) {
     .onConflictDoNothing({ target: systemSettings.id });
 }
 
-async function seedDeviceModels(db: ReturnType<typeof drizzle>, projectRoot: string) {
-  const seedFilePath = path.join(projectRoot, 'database-seed.sql');
-  const seeds = await loadDeviceModelsFromDump(seedFilePath);
-
-  for (const batch of chunk(seeds, 250)) {
-    await db
-      .insert(deviceModels)
-      .values(batch)
-      .onConflictDoUpdate({
-        target: [deviceModels.brand, deviceModels.modelName],
-        set: {
-          deviceType: sql.raw('excluded.device_type'),
-          modelNumber: sql.raw('excluded.model_number'),
-        },
-      });
-  }
-
-  const result = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(deviceModels);
-
-  console.log(`Seeded device_models catalog (${result[0]?.count ?? 0} rows).`);
-}
-
 async function main() {
   const flags = parseFlags(process.argv.slice(2));
   const projectRoot = getProjectRoot();
@@ -266,7 +142,7 @@ async function main() {
     await ensureDatabaseExists(databaseUrl, flags.reset);
   }
 
-  const pool = new Pool(getPgConnectionConfig(databaseUrl));
+  const pool = new Pool({ ...getPgConnectionConfig(databaseUrl), connectionTimeoutMillis: 10000 });
 
   try {
     await ensurePostgresPrereqs(pool);
@@ -282,7 +158,7 @@ async function main() {
     if (!flags.migrateOnly) {
       console.log('Seeding baseline data...');
       await seedSystemSettings(db);
-      await seedDeviceModels(db, projectRoot);
+      await seedPricingCatalog(pool);
       console.log('Baseline seed complete.');
     }
 
