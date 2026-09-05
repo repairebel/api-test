@@ -10,6 +10,11 @@ export const repairPriceSources = pgTable('repair_price_sources', {
 }, (t) => [primaryKey({ columns: [t.catalogVersion, t.sourceId] })]);
 
 export interface PriceSnapshot {
+  pricingSource?: 'dataset' | 'bedrock';
+  customPartName?: string;
+  modelId?: string;
+  promptVersion?: string;
+  expiresAt?: string;
   catalogVersion: string;
   currency: 'USD';
   deviceModelId: string;
@@ -27,6 +32,13 @@ export interface PriceSnapshot {
   sourceSha256: string;
   aggregation: string;
 }
+
+export const generatedRepairQuotes = pgTable('generated_repair_quotes', {
+  cacheKey: varchar('cache_key', {length:64}).primaryKey(),
+  snapshot: jsonb('snapshot').$type<PriceSnapshot>().notNull(),
+  expiresAt: timestamp('expires_at', {withTimezone:true}).notNull(),
+  createdAt: timestamp('created_at', {withTimezone:true}).notNull().defaultNow(),
+}, t => [index('idx_generated_repair_quotes_expiry').on(t.expiresAt)]);
 
 export const repairPrices = pgTable('repair_prices', {
   deviceModelId: uuid('device_model_id').notNull().references(() => deviceModels.id),

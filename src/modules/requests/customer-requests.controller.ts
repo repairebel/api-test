@@ -1,4 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
+import { nearbyShopsQuerySchema } from './nearby-shops-query.js';
 import {
   searchDeviceModelsQuerySchema,
   customerMediaSignatureBodySchema,
@@ -235,11 +236,7 @@ export async function customerNearbyShopsHandler(request: FastifyRequest, reply:
     throw new AppError(403, ErrorCode.FORBIDDEN, 'This endpoint requires a customer account');
   }
 
-  const { lat, lng, radius } = request.query as { lat?: string; lng?: string; radius?: string };
-  if (!lat || !lng) {
-    throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'lat and lng query parameters are required');
-  }
-
-  const result = await findNearbyShops(parseFloat(lat), parseFloat(lng), radius ? parseFloat(radius) : 50);
+  const { lat, lng, radius } = nearbyShopsQuerySchema.parse(request.query);
+  const result = await findNearbyShops(lat, lng, radius);
   return reply.send(successResponse(result));
 }

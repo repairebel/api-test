@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { customPartNameSchema } from '../pricing/issue-categories.js';
 
 // GET /v1/device-models?brand=&query=
 export const searchDeviceModelsQuerySchema = z.object({
@@ -22,6 +23,7 @@ export const createCustomerRequestBodySchema = z.object({
   deviceModel: z.string().min(1).max(255),
   issueType: z.string().min(1).max(50),
   issueDescription: z.string().max(5000).optional().default(''),
+  customPartName: customPartNameSchema.optional(),
   photos: z.array(z.string().url()).max(10).default([]),
   videoUrl: z.string().url().optional(),
   customerOfferCents: z.number().int().positive().max(2147483647),
@@ -45,6 +47,7 @@ export const customerRequestIdParamsSchema = z.object({
 
 // GET /v1/price-estimate?deviceBrand=&issueType=&lat=&lng=
 export const priceEstimateQuerySchema = z.object({
+  customPartName: customPartNameSchema.optional(),
   deviceModelId: z.string().uuid(),
   deviceBrand: z.string().min(1).max(100).optional(),
   deviceModel: z.string().min(1).max(255).optional(),

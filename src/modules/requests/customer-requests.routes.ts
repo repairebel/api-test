@@ -34,7 +34,7 @@ const customerRequestsRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.get('/price-estimate', {
-    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    config: { rateLimit: { max: 12, timeWindow: '1 minute' } },
     handler: priceEstimateHandler,
   });
 

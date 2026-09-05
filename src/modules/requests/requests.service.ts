@@ -818,7 +818,7 @@ export async function findNearbyShops(lat: number, lng: number, radiusKm = 50) {
     .filter((s) => {
       if (!s.latitude || !s.longitude) return false;
       const d = haversineKm(lat, lng, parseFloat(s.latitude), parseFloat(s.longitude));
-      return d <= radiusKm;
+      return d <= radiusKm + 1e-9;
     })
     .map((s) => ({
       ...s,

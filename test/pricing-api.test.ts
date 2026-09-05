@@ -181,6 +181,18 @@ describe('dataset pricing through authenticated customer and store APIs', { conc
     }
   });
 
+  it('customer map excludes shops over 100 miles even when an older client asks for 5000 km', async () => {
+    const near = await inject('GET', '/v1/customer/nearby-shops?lat=-55.0001&lng=-140.0001&radius=5000', customerToken);
+    assert.equal(near.statusCode, 200, near.body);
+    assert.ok(near.json().data.some((shop: {id: string}) => shop.id === shopId));
+    const far = await inject('GET', '/v1/customer/nearby-shops?lat=-53.0001&lng=-140.0001&radius=5000', customerToken);
+    assert.equal(far.statusCode, 200, far.body);
+    assert.ok(!far.json().data.some((shop: {id: string}) => shop.id === shopId));
+    assert.ok(far.json().data.every((shop: {distanceKm: number}) => shop.distanceKm <= 160.9344 + 1e-9));
+    const invalid = await inject('GET', '/v1/customer/nearby-shops?lat=invalid&lng=0', customerToken);
+    assert.equal(invalid.statusCode, 400, invalid.body);
+  });
+
   it('publishes supported models and repairs and the exact workbook-derived quote', async () => {
     const models = await inject('GET', '/v1/device-models?brand=Apple&query=iPhone%2012&limit=500');
     assert.equal(models.statusCode, 200, models.body);

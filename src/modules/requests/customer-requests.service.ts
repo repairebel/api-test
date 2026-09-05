@@ -211,6 +211,7 @@ function generateCustomerSignature(
 // ─── Create Customer Request ───
 
 interface CreateCustomerRequestInput {
+  customPartName?: string;
   deviceModelId: string;
   catalogVersion?: string;
   deviceBrand: string;
