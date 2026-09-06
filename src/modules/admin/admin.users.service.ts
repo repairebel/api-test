@@ -11,6 +11,7 @@ import {
   disputes,
   protectionSubscribers,
   protectionClaims,
+  loginActivity,
 } from '../../db/schema/index.js';
 import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 import argon2 from 'argon2';
@@ -86,11 +87,19 @@ export async function getUserById(userId: string) {
 
   if (!user) throw new AppError(404, ErrorCode.NOT_FOUND, 'User not found');
 
+  const activity = await db.select({
+    id: loginActivity.id, userType: loginActivity.userType, ipAddress: loginActivity.ipAddress,
+    location: loginActivity.location, deviceName: loginActivity.deviceName, platform: loginActivity.platform,
+    userAgent: loginActivity.userAgent, createdAt: loginActivity.createdAt,
+  }).from(loginActivity).where(eq(loginActivity.userId, userId)).orderBy(desc(loginActivity.createdAt)).limit(20);
+
   return {
     ...user,
     passwordHash: undefined,
     createdAt: user.createdAt?.toISOString() ?? null,
     updatedAt: user.updatedAt?.toISOString() ?? null,
+    loginActivity: activity.map((entry) => ({ ...entry, createdAt: entry.createdAt?.toISOString() ?? null })),
+    lastLogin: activity[0] ? { at: activity[0].createdAt?.toISOString() ?? null, ipAddress: activity[0].ipAddress, location: activity[0].location, deviceName: activity[0].deviceName } : null,
   };
 }
 

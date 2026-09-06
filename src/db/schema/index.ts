@@ -51,5 +51,6 @@ export { pushTokens, appTypeEnum } from './push-tokens.js';
 export { notifications, notificationTargetEnum, notificationCategoryEnum } from './notifications.js';
 export { adminUsers, adminRoleEnum, adminStatusEnum } from './admin-users.js';
 export { auditLogs, auditActionTypeEnum } from './audit-logs.js';
+export { loginActivity } from './login-activity.js';
 export { systemSettings } from './system-settings.js';
 export * from './repair-prices.js';

@@ -1,6 +1,6 @@
 import { eq, and, isNull, gt, sql } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import { users, shops, memberships, refreshTokens, passwordResetTokens, adminUsers } from '../../db/schema/index.js';
+import { users, shops, memberships, refreshTokens, passwordResetTokens, adminUsers, loginActivity } from '../../db/schema/index.js';
 import { hashPassword, verifyPassword } from '../../lib/password.js';
 import {
   signAccessToken,
@@ -186,7 +186,29 @@ export async function signupCustomer({ name, email, password, phone }: SignupCus
 // LOGIN (unified — works for both customers and shop users)
 // ──────────────────────────────────────────────────────────
 
-export async function login({ email, password, expectedUserType }: LoginBody) {
+export interface LoginContext {
+  ipAddress?: string;
+  userAgent?: string;
+  location?: string;
+  platform?: string;
+}
+
+function loginDeviceName(userAgent = '', platform = '') {
+  const source = `${platform} ${userAgent}`;
+  const os = /iPhone|iPad|iPod/i.test(source) ? 'iOS' : /Android/i.test(source) ? 'Android' : /Windows/i.test(source) ? 'Windows' : /Mac OS X|Macintosh/i.test(source) ? 'macOS' : /Linux/i.test(source) ? 'Linux' : platform || 'Unknown OS';
+  const browser = /Edg\//i.test(userAgent) ? 'Edge' : /Chrome\//i.test(userAgent) ? 'Chrome' : /Firefox\//i.test(userAgent) ? 'Firefox' : /Safari\//i.test(userAgent) && !/Chrome\//i.test(userAgent) ? 'Safari' : /Electron/i.test(userAgent) ? 'Desktop app' : '';
+  return browser ? `${os} · ${browser}` : os;
+}
+
+async function recordLogin(userId: string, userType: string, context?: LoginContext) {
+  try {
+    await db.insert(loginActivity).values({ userId, userType, ipAddress: context?.ipAddress || null, location: context?.location || null, deviceName: loginDeviceName(context?.userAgent, context?.platform), platform: context?.platform || null, userAgent: context?.userAgent || null });
+  } catch (error) {
+    console.error('Failed to record login activity:', error);
+  }
+}
+
+export async function login({ email, password, expectedUserType }: LoginBody, context?: LoginContext) {
   const genericError = 'Invalid email or password';
   const suspendedMessage = 'Due to Unusual Activities Your Account has been suspended';
 
@@ -242,7 +264,7 @@ export async function login({ email, password, expectedUserType }: LoginBody) {
 
   // Admin sessions are persistent and serialized against other logins/refreshes.
   if (user.userType === 'ADMIN') {
-    return db.transaction(async tx => {
+    const adminResult = await db.transaction(async tx => {
       await tx.select({ id: users.id }).from(users).where(eq(users.id, user.id)).for('update');
       const [profile] = await tx.select().from(adminUsers).where(eq(adminUsers.userId, user.id)).limit(1);
       if (!profile || profile.status === 'suspended') throw new AppError(403, ErrorCode.FORBIDDEN, 'Admin account is unavailable');
@@ -255,6 +277,8 @@ export async function login({ email, password, expectedUserType }: LoginBody) {
       return { accessToken: signAccessToken({ sub: user.id, userType: 'ADMIN', sessionVersion: updated.version }), refreshToken,
         user: { id: user.id, email: user.email, fullName: user.fullName, userType: user.userType, adminRole: profile.role } };
     });
+    await recordLogin(user.id, 'ADMIN', context);
+    return adminResult;
   }
 
   // Generate refresh token (common to both user types)
@@ -277,6 +301,7 @@ export async function login({ email, password, expectedUserType }: LoginBody) {
       userType: 'CUSTOMER',
     });
 
+    await recordLogin(user.id, 'CUSTOMER', context);
     return {
       accessToken,
       refreshToken: rawRefreshToken,
@@ -317,6 +342,8 @@ export async function login({ email, password, expectedUserType }: LoginBody) {
     role: membership.role,
     sessionVersion,
   });
+
+  await recordLogin(user.id, user.userType, context);
 
   return {
     accessToken,

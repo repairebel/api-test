@@ -43,6 +43,13 @@
       "when": 1788676286967,
       "tag": "0005_public_shop_email",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788677000000,
+      "tag": "0006_login_activity",
+      "breakpoints": true
     }
   ]
 }

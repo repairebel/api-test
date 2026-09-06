@@ -33,7 +33,13 @@ export async function signupCustomerHandler(request: FastifyRequest, reply: Fast
 
 export async function loginHandler(request: FastifyRequest, reply: FastifyReply) {
   const body = loginBodySchema.parse(request.body);
-  const result = await authService.login(body);
+  const forwardedFor = request.headers['x-forwarded-for'];
+  const ipAddress = (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0]?.trim() : request.ip) || request.ip;
+  const headers = request.headers as Record<string, string | string[] | undefined>;
+  const location = [headers['x-vercel-ip-city'], headers['x-vercel-ip-country'], headers['cf-ipcity'], headers['cf-ipcountry']]
+    .flatMap((value) => Array.isArray(value) ? value : value ? [value] : []).join(', ') || undefined;
+  const platform = headers['x-rr-platform']?.toString() || headers['x-client-platform']?.toString();
+  const result = await authService.login(body, { ipAddress, location, platform, userAgent: request.headers['user-agent'] });
   return reply.send(successResponse(result));
 }
 
