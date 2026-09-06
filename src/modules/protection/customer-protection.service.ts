@@ -1,4 +1,4 @@
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, exists } from 'drizzle-orm';
 import { db } from '../../db/client.js';
 import {
   protectionPlans,
@@ -9,6 +9,7 @@ import {
   systemSettings,
   shops,
   memberships,
+  jobs,
 } from '../../db/schema/index.js';
 import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 import { env } from '../../config/env.js';
@@ -336,10 +337,19 @@ async function ensureStripePriceForPlan(stripe: any, plan: any): Promise<string>
 //  LIST AVAILABLE PLANS (for customers to browse)
 // ─────────────────────────────────────────────
 
-export async function listAvailablePlans(shopId?: string) {
+export function completedRepairCondition(customerId: string) {
+  return exists(db.select({ id: jobs.id }).from(jobs).where(and(
+    eq(jobs.customerId, customerId), eq(jobs.shopId, shops.id),
+    eq(jobs.status, 'COMPLETED'), eq(jobs.paymentStatus, 'RELEASED'),
+  )));
+}
+
+export async function listAvailablePlans(customerId: string, shopId?: string) {
   const conditions = [
     eq(protectionPlans.status, 'ACTIVE'),
     eq(shops.protectionEnabled, true),
+    eq(shops.onboardingStatus, 'APPROVED'),
+    completedRepairCondition(customerId),
   ];
   if (shopId) {
     conditions.push(eq(protectionPlans.shopId, shopId));
@@ -393,6 +403,12 @@ export async function subscribeToPlan(customerId: string, input: SubscribeInput)
 
   if (!plan) {
     throw new AppError(404, ErrorCode.NOT_FOUND, 'Protection plan not found or inactive');
+  }
+
+  // Enforce eligibility before any Stripe calls, including direct subscriptions.
+  const eligible = plan.shopId ? await listAvailablePlans(customerId, plan.shopId) : [];
+  if (!eligible.some(candidate => candidate.id === plan.id)) {
+    throw new AppError(403, ErrorCode.FORBIDDEN, 'Complete a repair and release payment at this store before subscribing to its protection plans.');
   }
 
   // Check if customer already has an active subscription to this plan

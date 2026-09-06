@@ -1,3 +1,7 @@
+import { z } from 'zod';
+import { getCustomerShopProfile } from './customer-shop-profile.js';
+import { requireUserType } from '../../plugins/auth.plugin.js';
+import { successResponse } from '../../plugins/error-handler.plugin.js';
 import { FastifyPluginAsync } from 'fastify';
 import {
   issueTypesHandler,
@@ -19,6 +23,15 @@ import {
 } from './customer-requests.controller.js';
 
 const customerRequestsRoutes: FastifyPluginAsync = async (fastify) => {
+  fastify.get('/customer/shops/:shopId', {
+    preHandler: [fastify.authenticate, requireUserType('CUSTOMER')],
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    handler: async (request, reply) => {
+      const { shopId } = z.object({ shopId: z.string().uuid() }).parse(request.params);
+      const { page } = z.object({ page: z.coerce.number().int().min(1).max(10000).default(1) }).parse(request.query);
+      return reply.send(successResponse(await getCustomerShopProfile(shopId, page)));
+    },
+  });
   // ── Public catalog endpoints (no auth) ──
   // NOTE: /device-models/brands and /device-models/search are already
   //       registered in inventory.routes.ts — reuse those.

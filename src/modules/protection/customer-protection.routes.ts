@@ -13,6 +13,7 @@ import {
 } from './customer-protection.service.js';
 import { db } from '../../db/client.js';
 import { users } from '../../db/schema/index.js';
+import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 
 const customerProtectionRoutes: FastifyPluginAsync = async (fastify) => {
@@ -23,8 +24,8 @@ const customerProtectionRoutes: FastifyPluginAsync = async (fastify) => {
     preHandler: auth,
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
     handler: async (req, reply) => {
-      const { shopId } = req.query as { shopId?: string };
-      const plans = await listAvailablePlans(shopId);
+      const { shopId } = z.object({ shopId: z.string().uuid().optional() }).parse(req.query);
+      const plans = await listAvailablePlans(req.user!.userId, shopId);
       return reply.send(successResponse(plans));
     },
   });

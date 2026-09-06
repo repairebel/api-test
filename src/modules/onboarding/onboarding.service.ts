@@ -21,6 +21,7 @@ export async function updateShop(shopId: string, data: UpdateShopBody) {
   const updateData: Record<string, unknown> = { updatedAt: new Date() };
   if (data.name !== undefined) updateData.name = data.name;
   if (data.phone !== undefined) updateData.phone = data.phone || null;
+  if (data.publicEmail !== undefined) updateData.publicEmail = data.publicEmail || null;
   if (data.website !== undefined) updateData.website = data.website || null;
   if (data.description !== undefined) updateData.description = data.description || null;
   if (data.categories !== undefined) updateData.categories = data.categories;
@@ -35,6 +36,7 @@ export async function updateShop(shopId: string, data: UpdateShopBody) {
       name: shops.name,
       phone: shops.phone,
       website: shops.website,
+      publicEmail: shops.publicEmail,
       description: shops.description,
       categories: shops.categories,
       logoUrl: shops.logoUrl,

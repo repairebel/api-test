@@ -5,6 +5,7 @@ import { z } from 'zod';
 export const updateShopBodySchema = z.object({
   name: z.string().min(1).max(255).optional(),
   phone: z.string().max(30).optional(),
+  publicEmail: z.string().trim().email().max(255).optional().or(z.literal('')),
   website: z.string().url().max(500).optional().or(z.literal('')),
   description: z.string().max(2000).optional(),
   categories: z.array(z.string().min(1).max(50)).max(10).optional(),

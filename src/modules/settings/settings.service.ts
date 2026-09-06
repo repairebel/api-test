@@ -29,6 +29,7 @@ export async function getShopProfile(shopId: string) {
       name: shops.name,
       phone: shops.phone,
       website: shops.website,
+      publicEmail: shops.publicEmail,
       description: shops.description,
       categories: shops.categories,
       logoUrl: shops.logoUrl,

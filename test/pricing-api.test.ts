@@ -291,4 +291,67 @@ describe('dataset pricing through authenticated customer and store APIs', { conc
     assert.equal(exactFloor.json().data.priceCents, quote.suggestedPriceCents);
     assert.equal(exactFloor.json().data.status, 'PENDING');
   });
+  it('restricts plan discovery and direct subscriptions to completed, released repairs', async () => {
+    const pool = database!.pool;
+    const planId = randomUUID();
+    const jobId = randomUUID();
+    const req = await pool.query('SELECT id FROM requests WHERE customer_id=$1 LIMIT 1', [customerId]);
+    const offer = await pool.query('SELECT id FROM offers WHERE request_id=$1 LIMIT 1', [req.rows[0].id]);
+    await pool.query('UPDATE shops SET protection_enabled=true WHERE id=$1', [shopId]);
+    await pool.query(`INSERT INTO protection_plans(id,shop_id,name,billing_type,price_cents,max_payout_per_claim_cents)
+      VALUES($1,$2,'Eligibility fixture','MONTHLY',1000,20000)`, [planId,shopId]);
+    const url = `/v1/customer/protection/plans?shopId=${shopId}`;
+    assert.equal((await inject('GET', url)).statusCode, 401);
+    assert.equal((await inject('GET', url, ownerToken)).statusCode, 403);
+    assert.deepEqual((await inject('GET', url, customerToken)).json().data, []);
+    const denied = await inject('POST', '/v1/customer/protection/subscribe', customerToken, { planId });
+    assert.equal(denied.statusCode,403,denied.body);
+    await pool.query(`INSERT INTO jobs(id,request_id,offer_id,shop_id,customer_id,customer_name,device_brand,device_model,issue_description,price_cents,eta_minutes,status,payment_status)
+      VALUES($1,$2,$3,$4,$5,'Fixture','Apple','iPhone 13','Screen',10000,60,'READY','HELD')`,
+      [jobId,req.rows[0].id,offer.rows[0].id,shopId,customerId]);
+    for (const [status,payment] of [['READY','HELD'],['COMPLETED','HELD'],['COMPLETED','REFUNDED'],['CANCELLED','RELEASED']]) {
+      await pool.query('UPDATE jobs SET status=$2,payment_status=$3 WHERE id=$1',[jobId,status,payment]);
+      assert.deepEqual((await inject('GET',url,customerToken)).json().data,[]);
+    }
+    await pool.query("UPDATE jobs SET status='COMPLETED',payment_status='RELEASED' WHERE id=$1",[jobId]);
+    assert.equal((await inject('GET',url,customerToken)).json().data[0].id,planId);
+    const all = await inject('GET','/v1/customer/protection/plans',customerToken);
+    assert.deepEqual(all.json().data.map((p: {id:string}) => p.id),[planId]);
+    // A different customer's completion cannot grant eligibility.
+    await pool.query('UPDATE jobs SET customer_id=$2 WHERE id=$1',[jobId,ownerId]);
+    assert.deepEqual((await inject('GET',url,customerToken)).json().data,[]);
+    await pool.query('UPDATE jobs SET customer_id=$2 WHERE id=$1',[jobId,customerId]);
+    await pool.query('UPDATE shops SET protection_enabled=false WHERE id=$1',[shopId]);
+    assert.deepEqual((await inject('GET',url,customerToken)).json().data,[]);
+    await pool.query('UPDATE shops SET protection_enabled=true WHERE id=$1',[shopId]);
+    await pool.query("UPDATE protection_plans SET status='PAUSED' WHERE id=$1",[planId]);
+    assert.deepEqual((await inject('GET',url,customerToken)).json().data,[]);
+  });
+
+  it('serves safe store contact details and only visible paginated customer reviews', async () => {
+    const pool = database!.pool;
+    await pool.query(`UPDATE shops SET public_email='hello@example.invalid', website='https://example.invalid',
+      phone='+15555550100',logo_url='https://example.invalid/logo.png',
+      business_hours='[{"day":"Monday","isOpen":true,"openTime":"09:00","closeTime":"17:00"}]'::jsonb WHERE id=$1`,[shopId]);
+    await pool.query(`INSERT INTO reviews(shop_id,customer_id,customer_name,rating,text,is_hidden)
+      VALUES($1,$2,'Visible customer',5,'Great service',false),($1,$2,'Hidden customer',1,'Hidden text',true)`,[shopId,customerId]);
+    const url = `/v1/customer/shops/${shopId}`;
+    assert.equal((await inject('GET',url)).statusCode,401);
+    assert.equal((await inject('GET',url,ownerToken)).statusCode,403);
+    const response = await inject('GET',url,customerToken);
+    assert.equal(response.statusCode,200,response.body);
+    const profile = response.json().data;
+    assert.equal(profile.email,'hello@example.invalid');
+    assert.equal(profile.businessHours[0].openTime,'09:00');
+    assert.equal(profile.logoUrl,'https://example.invalid/logo.png');
+    assert.equal(profile.reviewCount,1); assert.equal(profile.rating,5);
+    assert.equal(profile.reviews[0].text,'Great service');
+    assert.equal(profile.stripeAccountId,undefined); assert.equal(profile.reviews[0].customerId,undefined);
+    assert.equal((await inject('GET',url+'?page=0',customerToken)).statusCode,400);
+    assert.deepEqual((await inject('GET',url+'?page=2',customerToken)).json().data.reviews,[]);
+    await pool.query("UPDATE shops SET onboarding_status='REJECTED' WHERE id=$1",[shopId]);
+    assert.equal((await inject('GET',url,customerToken)).statusCode,404);
+    assert.equal((await inject('GET',`/v1/customer/shops/${randomUUID()}`,customerToken)).statusCode,404);
+  });
+
 });
