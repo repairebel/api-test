@@ -9,7 +9,9 @@ export interface PushPayload {
   title: string;
   body: string;
   data?: Record<string, unknown>;
-  sound?: string | null;
+  sound?: ExpoPushMessage['sound'];
+  interruptionLevel?: ExpoPushMessage['interruptionLevel'];
+  ttl?: number;
   channelId?: string;
   priority?: 'default' | 'normal' | 'high';
 }
@@ -43,7 +45,9 @@ export async function sendPushToUser(
     validTokenIds.push(t.id);
     messages.push({
       to: t.token,
-      sound: payload.sound ?? 'default',
+      sound: payload.sound === undefined ? 'default' : payload.sound,
+      interruptionLevel: payload.interruptionLevel,
+      ttl: payload.ttl,
       title: payload.title,
       body: payload.body,
       data: payload.data ?? {},

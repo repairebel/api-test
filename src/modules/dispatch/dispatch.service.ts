@@ -232,8 +232,10 @@ async function notifyDispatchActivated(
         title: 'New Repair Request!',
         body: `${request.deviceBrand} ${request.deviceModel} — ${request.issueDescription}`,
         data: { screen: 'request-details', requestId: request.id, dispatchId: dispatch.id },
-        channelId: 'dispatch',
-        sound: 'noti_sound.wav',
+        channelId: 'dispatch-v2',
+        sound: process.env.IOS_CRITICAL_ALERTS_ENABLED === 'true' ? { critical: true, name: 'noti_sound.wav', volume: 1 } : 'noti_sound.wav',
+        interruptionLevel: process.env.IOS_CRITICAL_ALERTS_ENABLED === 'true' ? 'critical' : 'time-sensitive',
+        ttl: Math.max(1, Math.ceil((new Date(expiresAtIso).getTime() - Date.now()) / 1000)),
       },
       persist: {
         category: 'dispatch',

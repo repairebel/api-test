@@ -102,7 +102,7 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
     // version 0. They remain valid for existing sessions, but are rejected
     // immediately after a newer shop login advances the account version.
     if (
-      tokenUserType === 'SHOP_OWNER' &&
+      (tokenUserType === 'SHOP_OWNER' || tokenUserType === 'ADMIN') &&
       (decoded.sessionVersion === undefined
         ? user.sessionVersion > 0
         : decoded.sessionVersion !== user.sessionVersion)

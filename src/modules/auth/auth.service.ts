@@ -240,6 +240,23 @@ export async function login({ email, password, expectedUserType }: LoginBody) {
     sessionVersion = updatedUser?.sessionVersion ?? sessionVersion + 1;
   }
 
+  // Admin sessions are persistent and serialized against other logins/refreshes.
+  if (user.userType === 'ADMIN') {
+    return db.transaction(async tx => {
+      await tx.select({ id: users.id }).from(users).where(eq(users.id, user.id)).for('update');
+      const [profile] = await tx.select().from(adminUsers).where(eq(adminUsers.userId, user.id)).limit(1);
+      if (!profile || profile.status === 'suspended') throw new AppError(403, ErrorCode.FORBIDDEN, 'Admin account is unavailable');
+      await tx.update(refreshTokens).set({ revokedAt: new Date() }).where(and(eq(refreshTokens.userId, user.id), isNull(refreshTokens.revokedAt)));
+      const [updated] = await tx.update(users).set({ sessionVersion: sql`${users.sessionVersion} + 1` }).where(eq(users.id, user.id)).returning({ version: users.sessionVersion });
+      const refreshToken = generateRefreshToken();
+      await tx.insert(refreshTokens).values({ userId: user.id, tokenHash: hashToken(refreshToken), expiresAt: new Date('9999-12-31T00:00:00Z') });
+      await tx.update(adminUsers).set({ lastLoginAt: new Date() }).where(eq(adminUsers.id, profile.id));
+      try { const { getIO } = await import('../../lib/socket.js'); getIO().in(`admin-user:${user.id}`).disconnectSockets(true); } catch { /* HTTP-only test runtime */ }
+      return { accessToken: signAccessToken({ sub: user.id, userType: 'ADMIN', sessionVersion: updated.version }), refreshToken,
+        user: { id: user.id, email: user.email, fullName: user.fullName, userType: user.userType, adminRole: profile.role } };
+    });
+  }
+
   // Generate refresh token (common to both user types)
   const rawRefreshToken = generateRefreshToken();
   const refreshTokenHash = hashToken(rawRefreshToken);
@@ -270,54 +287,6 @@ export async function login({ email, password, expectedUserType }: LoginBody) {
         phone: user.phone,
         avatarUrl: user.avatarUrl,
         userType: user.userType,
-      },
-    };
-  }
-
-  // ─── Admin login ───
-  if (user.userType === 'ADMIN') {
-    const [adminUser] = await db
-      .select({
-        id: adminUsers.id,
-        name: adminUsers.name,
-        role: adminUsers.role,
-        status: adminUsers.status,
-      })
-      .from(adminUsers)
-      .where(eq(adminUsers.userId, user.id))
-      .limit(1);
-
-    if (!adminUser) {
-      throw new AppError(403, ErrorCode.FORBIDDEN, 'No admin profile found for this account');
-    }
-    if (adminUser.status === 'suspended') {
-      throw new AppError(403, ErrorCode.FORBIDDEN, 'Your admin account has been suspended');
-    }
-
-    // Update last login
-    await db.update(adminUsers).set({ lastLoginAt: new Date() }).where(eq(adminUsers.id, adminUser.id));
-
-    const accessToken = signAccessToken({
-      sub: user.id,
-      userType: 'ADMIN',
-    });
-
-    return {
-      accessToken,
-      refreshToken: rawRefreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        fullName: user.fullName ?? adminUser.name,
-        phone: user.phone,
-        avatarUrl: user.avatarUrl,
-        userType: user.userType,
-      },
-      admin: {
-        id: adminUser.id,
-        name: adminUser.name,
-        role: adminUser.role,
-        status: adminUser.status,
       },
     };
   }
@@ -391,6 +360,19 @@ export async function refresh(rawRefreshToken: string) {
 
   if (!storedToken || storedToken.revokedAt || storedToken.expiresAt < new Date()) {
     throw new AppError(401, ErrorCode.UNAUTHORIZED, 'Invalid or expired refresh token');
+  }
+
+  const [account] = await db.select({ type: users.userType }).from(users).where(eq(users.id, storedToken.userId)).limit(1);
+  if (account?.type === 'ADMIN') {
+    return db.transaction(async tx => {
+      const [admin] = await tx.select().from(users).where(eq(users.id, storedToken.userId)).for('update');
+      const [token] = await tx.select().from(refreshTokens).where(eq(refreshTokens.id, storedToken.id));
+      const [profile] = await tx.select().from(adminUsers).where(eq(adminUsers.userId, storedToken.userId));
+      if (!token || token.revokedAt) throw new AppError(401, ErrorCode.UNAUTHORIZED, 'This session has ended');
+      if (admin.status === 'SUSPENDED' || !profile || profile.status === 'suspended') throw new AppError(403, ErrorCode.FORBIDDEN, 'Admin account is unavailable');
+      // Keep the revocable device token stable, including across concurrent browser tabs.
+      return { accessToken: signAccessToken({ sub: admin.id, userType: 'ADMIN', sessionVersion: admin.sessionVersion }), refreshToken: rawRefreshToken };
+    });
   }
 
   // Rotate: revoke old token

@@ -1,3 +1,4 @@
+import { notifyAdmin } from '../../lib/notify.js';
 import { eq, desc, count, and, ne, sql } from 'drizzle-orm';
 import { db } from '../../db/client.js';
 import {
@@ -95,17 +96,8 @@ export async function connectToAgent(
     senderName: customerName,
   });
 
-  // Notify all admins that a new support request is waiting
-  try {
-    const io = getIO();
-    io.to('admin').emit('support:new-request', {
-      conversationId: conv.id,
-      customerName,
-      category,
-      description,
-      createdAt: conv.createdAt?.toISOString() ?? new Date().toISOString(),
-    });
-  } catch {}
+  await notifyAdmin({ event: 'support:new-request', payload: { conversationId: conv.id, customerName, category, description, createdAt: conv.createdAt },
+    persist: { category: 'chat', title: 'New support request', body: `${customerName}: ${description.slice(0, 160)}`, data: { conversationId: conv.id } } });
 
   return {
     conversationId: conv.id,
@@ -265,6 +257,9 @@ export async function sendSupportMessage(
     const io = getIO();
     io.to(`support:${conversationId}`).emit('support:message', messagePayload);
   } catch {}
+
+  if (role === 'user') await notifyAdmin({ event: 'support:customer-message', payload: messagePayload,
+    persist: { category: 'chat', title: `Support message from ${senderName}`, body: content.slice(0, 160) || 'New attachment', data: { conversationId, messageId: msg.id } } });
 
   return messagePayload;
 }

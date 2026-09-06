@@ -167,7 +167,7 @@ export async function createDispute(
     await notifyAdmin({
       event: 'dispute:created',
       payload: { disputeId: dispute.id, jobId, reasonCode: dispute.reasonCode },
-      persist: undefined,
+      persist: { category: 'dispute', title: 'New dispute request', body: `A customer reported a dispute: ${dispute.reasonCode}`, data: { disputeId: dispute.id, jobId } },
     });
   } catch {}
 

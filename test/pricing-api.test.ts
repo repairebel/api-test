@@ -354,4 +354,42 @@ describe('dataset pricing through authenticated customer and store APIs', { conc
     assert.equal((await inject('GET',`/v1/customer/shops/${randomUUID()}`,customerToken)).statusCode,404);
   });
 
+  it('keeps admin sessions persistent, revokes previous devices, and persists realtime alerts', async () => {
+    const adminId = randomUUID();
+    const email = `${runId}-admin@example.invalid`;
+    const password = 'Test-Admin-Pass-999!';
+    const { hashPassword } = await import('../src/lib/password.js');
+    await database!.pool.query("INSERT INTO users(id,email,password_hash,user_type) VALUES($1,$2,$3,'ADMIN')", [adminId,email,await hashPassword(password)]);
+    await database!.pool.query("INSERT INTO admin_users(user_id,name) VALUES($1,'Alert test admin')", [adminId]);
+    try {
+      const login = async () => {
+        const result = await inject('POST','/v1/auth/login',undefined,{email,password,expectedUserType:'ADMIN'});
+        assert.equal(result.statusCode,200,result.body); return result.json().data;
+      };
+      const first = await login();
+      const expiry = await database!.pool.query('SELECT expires_at FROM refresh_tokens WHERE user_id=$1 AND revoked_at IS NULL',[adminId]);
+      assert.equal(new Date(expiry.rows[0].expires_at).getUTCFullYear(),9999);
+      const renewed = await Promise.all([1,2].map(() => inject('POST','/v1/auth/refresh',undefined,{refreshToken:first.refreshToken})));
+      for (const res of renewed) { assert.equal(res.statusCode,200,res.body); assert.equal(res.json().data.refreshToken,first.refreshToken); }
+      const second = await login();
+      assert.equal((await inject('GET','/v1/me',first.accessToken)).statusCode,401);
+      assert.equal((await inject('POST','/v1/auth/refresh',undefined,{refreshToken:first.refreshToken})).statusCode,401);
+      assert.equal((await inject('GET','/v1/me',second.accessToken)).statusCode,200);
+      const { notifyAdmin } = await import('../src/lib/notify.js');
+      const events: string[] = [];
+      const adapter = io!.of('/').adapter;
+      const broadcast = adapter.broadcast.bind(adapter);
+      adapter.broadcast = (packet, options) => { if (options.rooms.has(`admin-user:${adminId}`)) events.push(packet.data?.[0]); broadcast(packet,options); };
+      try {
+        await notifyAdmin({adminUserId:adminId,event:'dispute:created',payload:{disputeId:'fixture'},persist:{category:'dispute',title:'New dispute',body:'Fixture'}});
+        await notifyAdmin({adminUserId:adminId,event:'support:customer-message',payload:{conversationId:'fixture'},persist:{category:'chat',title:'New support message',body:'Fixture'}});
+        assert.deepEqual(events,['notification:new','notification:new']);
+        const saved = await database!.pool.query('SELECT category FROM notifications WHERE user_id=$1 ORDER BY category',[adminId]);
+        assert.deepEqual(saved.rows.map(r=>r.category),['chat','dispute']);
+      } finally { adapter.broadcast = broadcast; }
+      await inject('POST','/v1/auth/logout',second.accessToken,{refreshToken:second.refreshToken});
+      assert.equal((await inject('POST','/v1/auth/refresh',undefined,{refreshToken:second.refreshToken})).statusCode,401);
+    } finally { await database!.pool.query('DELETE FROM users WHERE id=$1',[adminId]); }
+  });
+
 });

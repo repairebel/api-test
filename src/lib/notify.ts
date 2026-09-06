@@ -3,8 +3,8 @@ import { sendPushToUser, PushPayload } from './push.js';
 import { getShopOwnerUserId } from './push-helpers.js';
 import { createNotification, CreateNotificationInput } from '../modules/notifications/notifications.service.js';
 import { db } from '../db/client.js';
-import { customerNotificationPrefs } from '../db/schema/index.js';
-import { eq } from 'drizzle-orm';
+import { customerNotificationPrefs, users, adminUsers } from '../db/schema/index.js';
+import { eq, and } from 'drizzle-orm';
 
 type NotificationCategory = CreateNotificationInput['category'];
 
@@ -185,22 +185,13 @@ export async function notifyCustomer({ customerId, event, payload, push, persist
  * Optionally persists the notification for a specific admin user.
  */
 export async function notifyAdmin({ adminUserId, event, payload, persist }: NotifyAdminOptions): Promise<void> {
-  // Emit to all admins in the admin room
-  getIO().to('admin').emit(event, payload);
-
-  // Persist notification for specific admin user if provided
-  if (persist && adminUserId) {
-    try {
-      await createNotification({
-        userId: adminUserId,
-        targetType: 'ADMIN',
-        category: persist.category,
-        title: persist.title,
-        body: persist.body,
-        data: persist.data ?? payload,
-      });
-    } catch (err) {
-      console.error('❌ Failed to persist admin notification:', err);
-    }
+  try { getIO().to('admin').emit(event, payload); } catch { /* Persist even without sockets. */ }
+  if (!persist) return;
+  const recipients = await db.select({ id: users.id }).from(users)
+    .innerJoin(adminUsers, eq(adminUsers.userId, users.id))
+    .where(and(eq(users.userType, 'ADMIN'), eq(users.status, 'ACTIVE'), eq(adminUsers.status, 'active'), adminUserId ? eq(users.id, adminUserId) : undefined));
+  for (const user of recipients) {
+    const notification = await createNotification({ userId: user.id, targetType: 'ADMIN', ...persist, data: persist.data ?? payload });
+    try { getIO().to(`admin-user:${user.id}`).emit('notification:new', notification); } catch { /* Available on next fetch. */ }
   }
 }

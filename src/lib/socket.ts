@@ -1,3 +1,8 @@
+import { verifyAccessToken } from './tokens.js';
+import { db } from '../db/client.js';
+import { users, adminUsers } from '../db/schema/index.js';
+import { eq } from 'drizzle-orm';
+import { redis } from './redis.js';
 import { Server as HttpServer } from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
 import { env } from '../config/env.js';
@@ -128,10 +133,24 @@ export function initSocketIO(httpServer: HttpServer): SocketIOServer {
     });
 
     // Allow admin clients to join the admin room (for real-time dashboard notifications)
-    socket.on('join:admin', () => {
-      socket.join('admin');
-      console.log(`🛡️ Socket ${socket.id} joined admin room`);
+    let adminCheck: ReturnType<typeof setInterval> | undefined;
+    const authenticateAdmin = async () => {
+      try {
+        const token = verifyAccessToken(socket.handshake.auth?.token);
+        if (token.userType !== 'ADMIN' || await redis.exists(`bl:${token.jti}`)) throw new Error('Unauthorized');
+        const [user] = await db.select().from(users).where(eq(users.id, token.sub)).limit(1);
+        const [profile] = await db.select().from(adminUsers).where(eq(adminUsers.userId, token.sub)).limit(1);
+        if (!user || user.status === 'SUSPENDED' || !profile || profile.status === 'suspended' || (token.sessionVersion ?? 0) !== user.sessionVersion) throw new Error('Session ended');
+        if (!socket.connected) return;
+        await socket.join('admin');
+        await socket.join(`admin-user:${token.sub}`);
+      } catch { socket.disconnect(true); }
+    };
+    socket.on('join:admin', async () => {
+      await authenticateAdmin();
+      if (socket.connected && !adminCheck) adminCheck = setInterval(() => void authenticateAdmin(), 30000);
     });
+    socket.on('disconnect', () => { if (adminCheck) clearInterval(adminCheck); });
 
     socket.on('leave:admin', () => {
       socket.leave('admin');
