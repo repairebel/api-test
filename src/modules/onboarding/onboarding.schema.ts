@@ -27,11 +27,24 @@ export type UpdateLocationBody = z.infer<typeof updateLocationBodySchema>;
 
 // ── PATCH /v1/shops/me/hours ──
 
+const timeStringSchema = z.string().refine(
+  (val) => {
+    if (!val || typeof val !== 'string') return false;
+    const trimmed = val.trim();
+    // 12-hour AM/PM: e.g. "12:00 PM", "9:00 AM", "12:00am", "12:00PM"
+    if (/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)$/i.test(trimmed)) return true;
+    // 24-hour: e.g. "09:00", "18:00", "00:00", "24:00"
+    if (/^([01]?[0-9]|2[0-4]):([0-5][0-9])$/.test(trimmed)) return true;
+    return false;
+  },
+  { message: 'Must be a valid time format, e.g. "12:00 PM" or "09:00"' },
+);
+
 const dayScheduleSchema = z.object({
   day: z.string().min(1),
   isOpen: z.boolean(),
-  openTime: z.string().regex(/^\d{2}:\d{2}$/, 'Must be HH:MM format'),
-  closeTime: z.string().regex(/^\d{2}:\d{2}$/, 'Must be HH:MM format'),
+  openTime: timeStringSchema,
+  closeTime: timeStringSchema,
 });
 
 export const updateHoursBodySchema = z.object({

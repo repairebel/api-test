@@ -63,6 +63,77 @@ function getShopLocalClock(
     return null;
   }
 }
+
+function parseTimeToMinutes(timeStr: string): number | null {
+  if (!timeStr || typeof timeStr !== 'string') return null;
+  const trimmed = timeStr.trim().toUpperCase();
+
+  // Match 12-hour AM/PM format: e.g. "12:00 PM", "9:30 AM", "12:00PM"
+  const ampmMatch = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (ampmMatch) {
+    let hours = parseInt(ampmMatch[1], 10);
+    const minutes = parseInt(ampmMatch[2], 10);
+    const isPM = ampmMatch[3] === 'PM';
+
+    if (hours === 12) {
+      hours = isPM ? 12 : 0;
+    } else if (isPM) {
+      hours += 12;
+    }
+    return hours * 60 + minutes;
+  }
+
+  // Match 24-hour format: e.g. "09:00", "18:00", "00:00", "24:00"
+  const match24 = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    let hours = parseInt(match24[1], 10);
+    const minutes = parseInt(match24[2], 10);
+    if (hours === 24 && minutes === 0) {
+      return 1440;
+    }
+    return hours * 60 + minutes;
+  }
+
+  return null;
+}
+
+export function isTimeWithinSchedule(nowHHMM: string, openTimeStr: string, closeTimeStr: string): boolean {
+  if (!openTimeStr || !closeTimeStr) return true;
+  const openClean = openTimeStr.trim().toUpperCase();
+  const closeClean = closeTimeStr.trim().toUpperCase();
+
+  // All-day open representations:
+  // "12:00 PM to 12:00 AM", "12:00 AM to 12:00 AM", identical open & close, or 00:00 to 24:00/23:59
+  if (
+    openClean === closeClean ||
+    (openClean === '12:00 PM' && closeClean === '12:00 AM') ||
+    (openClean === '12:00 AM' && closeClean === '12:00 AM') ||
+    (openClean === '00:00' && (closeClean === '24:00' || closeClean === '23:59' || closeClean === '00:00'))
+  ) {
+    return true;
+  }
+
+  const nowMin = parseTimeToMinutes(nowHHMM);
+  const openMin = parseTimeToMinutes(openTimeStr);
+  const closeMin = parseTimeToMinutes(closeTimeStr);
+
+  if (nowMin == null || openMin == null || closeMin == null) {
+    return true;
+  }
+
+  // Standard same-day interval (e.g. 09:00 to 18:00)
+  if (openMin < closeMin) {
+    return nowMin >= openMin && nowMin <= closeMin;
+  }
+
+  // Overnight interval spanning midnight (e.g. 20:00 to 04:00)
+  if (openMin > closeMin) {
+    return nowMin >= openMin || nowMin <= closeMin;
+  }
+
+  return true;
+}
+
 import { notifyShop, notifyCustomer } from '../../lib/notify.js';
 import { scheduleDispatchTimeout } from '../../lib/queue.js';
 
@@ -505,11 +576,11 @@ export async function startDispatch(
       const clock = getShopLocalClock(shop.latitude, shop.longitude);
       if (clock) {
         const todaySchedule = shop.business_hours.find(
-          (d: DaySchedule) => d.day === clock.todayName,
+          (d: DaySchedule) => d.day?.trim().toLowerCase() === clock.todayName.toLowerCase(),
         );
         if (todaySchedule && !todaySchedule.isOpen) return false;
         if (todaySchedule && todaySchedule.openTime && todaySchedule.closeTime) {
-          if (clock.nowHHMM < todaySchedule.openTime || clock.nowHHMM > todaySchedule.closeTime) return false;
+          if (!isTimeWithinSchedule(clock.nowHHMM, todaySchedule.openTime, todaySchedule.closeTime)) return false;
         }
       }
       // If the shop's timezone can't be determined, skip the hours filter rather

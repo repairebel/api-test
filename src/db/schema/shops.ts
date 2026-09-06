@@ -7,12 +7,12 @@ export const onboardingStatusEnum = pgEnum('onboarding_status', [
   'REJECTED',
 ]);
 
-/** Schema for a single day's business hours. */
+/** Schema for a single day's business hours. Supports 12-hour AM/PM (e.g. '12:00 PM', '12:00 AM') or 24-hour ('09:00'). */
 export interface DaySchedule {
   day: string;        // 'Monday', 'Tuesday', etc.
   isOpen: boolean;
-  openTime: string;   // 'HH:MM' — e.g. '09:00'
-  closeTime: string;  // 'HH:MM' — e.g. '18:00'
+  openTime: string;   // e.g. '12:00 PM' or '09:00'
+  closeTime: string;  // e.g. '12:00 AM' or '18:00'
 }
 
 /** Per-part-type warranty override. */
