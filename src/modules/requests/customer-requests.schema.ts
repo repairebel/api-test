@@ -80,3 +80,9 @@ export const confirmJobBodySchema = z.object({
   rating: z.number().int().min(1).max(5).optional(),
   reviewText: z.string().max(2000).optional(),
 });
+
+export const adjustmentIdParamsSchema = z.object({ adjustmentId: z.string().uuid() });
+export const confirmAdjustmentBodySchema = z.object({ stripePaymentIntentId: z.string().min(1).max(255) });
+export const createTipBodySchema = z.object({ amountCents: z.number().int().min(100).max(100000) });
+export const tipIdParamsSchema = z.object({ tipId: z.string().uuid() });
+export const confirmTipBodySchema = z.object({ stripePaymentIntentId: z.string().min(1).max(255) });

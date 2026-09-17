@@ -19,6 +19,11 @@ import {
   getCustomerJobHandler,
   confirmJobHandler,
   updatePaymentMethodHandler,
+  approveAdjustmentHandler,
+  confirmAdjustmentHandler,
+  declineAdjustmentHandler,
+  createTipHandler,
+  confirmTipHandler,
   customerNearbyShopsHandler,
 } from './customer-requests.controller.js';
 
@@ -127,6 +132,36 @@ const customerRequestsRoutes: FastifyPluginAsync = async (fastify) => {
     preHandler: [fastify.authenticate],
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
     handler: updatePaymentMethodHandler,
+  });
+
+  fastify.post('/customer/adjustments/:adjustmentId/approve', {
+    preHandler: [fastify.authenticate],
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    handler: approveAdjustmentHandler,
+  });
+
+  fastify.post('/customer/adjustments/:adjustmentId/confirm-payment', {
+    preHandler: [fastify.authenticate],
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    handler: confirmAdjustmentHandler,
+  });
+
+  fastify.post('/customer/adjustments/:adjustmentId/decline', {
+    preHandler: [fastify.authenticate],
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    handler: declineAdjustmentHandler,
+  });
+
+  fastify.post('/customer/jobs/:jobId/tip', {
+    preHandler: [fastify.authenticate],
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    handler: createTipHandler,
+  });
+
+  fastify.post('/customer/tips/:tipId/confirm-payment', {
+    preHandler: [fastify.authenticate],
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    handler: confirmTipHandler,
   });
 
   // ── Map / Nearby Shops ──

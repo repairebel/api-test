@@ -7,8 +7,8 @@ or region variant, parts category and repair variant. Example: Apple / iPhone /
 
 ## Price policy
 
-Suggested minimum = **2 × parts cost + $30 fixed labor**, rounded upward to cents.
-Customers cannot offer less. The importer rejects any other multiplier or labor
+Suggested price = **2 × parts cost + $30 fixed labor**, rounded upward to cents.
+Customers may offer less. The importer rejects any other multiplier or labor
 fee. The workbook and server use scaled decimal arithmetic to agree to the cent.
 
 Each device/repair price uses the unweighted median of eligible source-row medians.
@@ -62,7 +62,7 @@ the artifact-tool Excel builder. The original extractor reads all four sheets.
 Do not deploy its legacy pricing output. The corrected Excel import validates
 every computed minimum against independent decimal math.
 
-API tests verify exact-floor acceptance, below-floor rejection, stale quotes and
+API tests verify offers below and at the suggestion, stale quotes and
 customer/store price consistency. `npm run test:deploy` checks repeatable compiled
 Railway setup on a fresh local database without SQL dumps or source files.
 See `RAILWAY.md`. Remote imports are restricted to the independently verified test

@@ -325,6 +325,7 @@ export async function login({ email, password, expectedUserType }: LoginBody, co
       shopName: shops.name,
       onboardingStatus: shops.onboardingStatus,
       stripeConnected: shops.stripeConnected,
+      isSuspended: shops.isSuspended,
     })
     .from(memberships)
     .innerJoin(shops, eq(memberships.shopId, shops.id))
@@ -361,6 +362,7 @@ export async function login({ email, password, expectedUserType }: LoginBody, co
       name: membership.shopName,
       onboardingStatus: membership.onboardingStatus,
       stripeConnected: membership.stripeConnected,
+      isSuspended: membership.isSuspended,
     },
   };
 }
@@ -675,6 +677,7 @@ export async function getMe(userId: string) {
       shopName: shops.name,
       onboardingStatus: shops.onboardingStatus,
       stripeConnected: shops.stripeConnected,
+      isSuspended: shops.isSuspended,
       vacationMode: shops.vacationMode,
       protectionEnabled: shops.protectionEnabled,
     })
@@ -690,6 +693,7 @@ export async function getMe(userId: string) {
       role: m.role,
       onboardingStatus: m.onboardingStatus,
       stripeConnected: m.stripeConnected,
+      isSuspended: m.isSuspended,
       vacationMode: m.vacationMode,
       protectionEnabled: m.protectionEnabled,
     })),

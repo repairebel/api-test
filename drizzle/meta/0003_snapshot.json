@@ -1,6 +1,6 @@
 {
-  "id": "36561966-fe11-4472-96fc-c591e49ce904",
-  "prevId": "6d3b2fa9-101f-42c1-bcd7-2ed19b223998",
+  "id": "5b4aa26f-35ba-43df-9c89-06e129347e22",
+  "prevId": "402565fe-8b2c-4766-bf35-076433206156",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -482,13 +482,6 @@
           "type": "varchar(150)",
           "primaryKey": false,
           "notNull": false
-        },
-        "is_admin_override": {
-          "name": "is_admin_override",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "created_at": {
           "name": "created_at",
@@ -4210,13 +4203,6 @@
           "notNull": true,
           "default": "'ACTIVE'"
         },
-        "session_version": {
-          "name": "session_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
         "privacy_share_usage": {
           "name": "privacy_share_usage",
           "type": "boolean",
@@ -4435,13 +4421,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": true
-        },
-        "is_admin_override": {
-          "name": "is_admin_override",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "snapshot": {
           "name": "snapshot",

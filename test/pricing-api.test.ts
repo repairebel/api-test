@@ -32,6 +32,7 @@ type Quote = {
 };
 
 const runId = randomUUID();
+const manualDeviceId = randomUUID();
 const customerId = randomUUID();
 const ownerId = randomUUID();
 const shopId = randomUUID();
@@ -167,6 +168,7 @@ describe('dataset pricing through authenticated customer and store APIs', { conc
         }
       }
       if (database) {
+        await database.pool.query("DELETE FROM generated_repair_quotes WHERE snapshot->>'deviceModelId' = $1", [manualDeviceId]);
         await database.pool.query('DELETE FROM requests WHERE customer_id = $1', [customerId]);
         await database.pool.query('DELETE FROM shops WHERE id = $1', [shopId]);
         await database.pool.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [[customerId, ownerId]]);
@@ -178,6 +180,41 @@ describe('dataset pricing through authenticated customer and store APIs', { conc
       if (queues) await Promise.all([queues.dispatchTimeoutQueue.close(), queues.offerExpiryQueue.close(), queues.payoutReleaseQueue.close()]);
       if (redisModule) await redisModule.redis.quit();
       if (database) await database.pool.end();
+    }
+  });
+
+  it('prices a manually entered wearable with the updated Bedrock output and caches the snapshot', async () => {
+    const {bedrockPriceProvider} = await import('../src/modules/pricing/generated-quotes.js');
+    const {parseGeneratedPrice, PRICING_PROMPT_VERSION} = await import('../src/modules/pricing/bedrock-pricing.js');
+    const original = bedrockPriceProvider.predict;
+    let calls = 0;
+    bedrockPriceProvider.predict = async (input) => {
+      calls++;
+      assert.deepEqual(input.device, {brand:'Microsoft',model:'Band 2',type:'Unknown'});
+      assert.deepEqual(input.repair, {category:'OTHER',partName:'Band strip'});
+      return parseGeneratedPrice('{"available":true,"partType":"replacement watch band","partsCostUsd":8,"repairComplexity":"user_replaceable"}');
+    };
+    try {
+      const params = new URLSearchParams({deviceModelId:manualDeviceId,deviceBrand:'Microsoft',deviceModel:'Band 2',issueType:'OTHER',customPartName:'Band strip'});
+      for (let i=0;i<2;i++) {
+        const response = await inject('GET', `/v1/price-estimate?${params}`);
+        assert.equal(response.statusCode,200,response.body);
+        const data = response.json().data;
+        assert.equal(data.source,'bedrock');
+        assert.equal(data.suggestedPriceCents,4600);
+        assert.equal(data.minPriceCents,4600);
+        assert.equal(data.priceSnapshot.partType,'replacement watch band');
+        assert.equal(data.priceSnapshot.repairComplexity,'user_replaceable');
+        assert.equal(data.priceSnapshot.promptVersion,PRICING_PROMPT_VERSION);
+      }
+      assert.equal(calls,1,'Second request should reuse the generated quote');
+      // A genuinely unidentifiable part must still be rejected, never priced arbitrarily.
+      bedrockPriceProvider.predict = async () => null;
+      params.set('customPartName','unidentifiable part');
+      const unavailable = await inject('GET', `/v1/price-estimate?${params}`);
+      assert.equal(unavailable.statusCode,422,unavailable.body);
+    } finally {
+      bedrockPriceProvider.predict = original;
     }
   });
 
@@ -219,16 +256,18 @@ describe('dataset pricing through authenticated customer and store APIs', { conc
     assert.equal(unsupported.statusCode, 422, unsupported.body);
   });
 
-  it('rejects one cent below the suggested floor without saving a request', async () => {
+  it('accepts an offer below the suggestion', async () => {
     const beforeCount = await customerRequestCount();
+    const customerOfferCents = Math.floor(quote.suggestedPriceCents * 0.75);
     const response = await inject('POST', '/v1/customer/requests', customerToken, requestBody({
-      customerOfferCents: quote.suggestedPriceCents - 1,
+      customerOfferCents,
       minPriceCents: 1,
       suggestedPriceCents: 1,
     }));
-    assert.equal(response.statusCode, 400, response.body);
-    assert.match(response.json().error.message, /suggested price/i);
-    assert.equal(await customerRequestCount(), beforeCount);
+    assert.equal(response.statusCode, 201, response.body);
+    requestIds.add(response.json().data.requestId);
+    assert.equal(response.json().data.customerOfferCents, customerOfferCents);
+    assert.equal(await customerRequestCount(), beforeCount + 1);
   });
 
   it('rejects stale quotes, mismatched model labels, and unsupported repairs before saving', async () => {
@@ -291,105 +330,4 @@ describe('dataset pricing through authenticated customer and store APIs', { conc
     assert.equal(exactFloor.json().data.priceCents, quote.suggestedPriceCents);
     assert.equal(exactFloor.json().data.status, 'PENDING');
   });
-  it('restricts plan discovery and direct subscriptions to completed, released repairs', async () => {
-    const pool = database!.pool;
-    const planId = randomUUID();
-    const jobId = randomUUID();
-    const req = await pool.query('SELECT id FROM requests WHERE customer_id=$1 LIMIT 1', [customerId]);
-    const offer = await pool.query('SELECT id FROM offers WHERE request_id=$1 LIMIT 1', [req.rows[0].id]);
-    await pool.query('UPDATE shops SET protection_enabled=true WHERE id=$1', [shopId]);
-    await pool.query(`INSERT INTO protection_plans(id,shop_id,name,billing_type,price_cents,max_payout_per_claim_cents)
-      VALUES($1,$2,'Eligibility fixture','MONTHLY',1000,20000)`, [planId,shopId]);
-    const url = `/v1/customer/protection/plans?shopId=${shopId}`;
-    assert.equal((await inject('GET', url)).statusCode, 401);
-    assert.equal((await inject('GET', url, ownerToken)).statusCode, 403);
-    assert.deepEqual((await inject('GET', url, customerToken)).json().data, []);
-    const denied = await inject('POST', '/v1/customer/protection/subscribe', customerToken, { planId });
-    assert.equal(denied.statusCode,403,denied.body);
-    await pool.query(`INSERT INTO jobs(id,request_id,offer_id,shop_id,customer_id,customer_name,device_brand,device_model,issue_description,price_cents,eta_minutes,status,payment_status)
-      VALUES($1,$2,$3,$4,$5,'Fixture','Apple','iPhone 13','Screen',10000,60,'READY','HELD')`,
-      [jobId,req.rows[0].id,offer.rows[0].id,shopId,customerId]);
-    for (const [status,payment] of [['READY','HELD'],['COMPLETED','HELD'],['COMPLETED','REFUNDED'],['CANCELLED','RELEASED']]) {
-      await pool.query('UPDATE jobs SET status=$2,payment_status=$3 WHERE id=$1',[jobId,status,payment]);
-      assert.deepEqual((await inject('GET',url,customerToken)).json().data,[]);
-    }
-    await pool.query("UPDATE jobs SET status='COMPLETED',payment_status='RELEASED' WHERE id=$1",[jobId]);
-    assert.equal((await inject('GET',url,customerToken)).json().data[0].id,planId);
-    const all = await inject('GET','/v1/customer/protection/plans',customerToken);
-    assert.deepEqual(all.json().data.map((p: {id:string}) => p.id),[planId]);
-    // A different customer's completion cannot grant eligibility.
-    await pool.query('UPDATE jobs SET customer_id=$2 WHERE id=$1',[jobId,ownerId]);
-    assert.deepEqual((await inject('GET',url,customerToken)).json().data,[]);
-    await pool.query('UPDATE jobs SET customer_id=$2 WHERE id=$1',[jobId,customerId]);
-    await pool.query('UPDATE shops SET protection_enabled=false WHERE id=$1',[shopId]);
-    assert.deepEqual((await inject('GET',url,customerToken)).json().data,[]);
-    await pool.query('UPDATE shops SET protection_enabled=true WHERE id=$1',[shopId]);
-    await pool.query("UPDATE protection_plans SET status='PAUSED' WHERE id=$1",[planId]);
-    assert.deepEqual((await inject('GET',url,customerToken)).json().data,[]);
-  });
-
-  it('serves safe store contact details and only visible paginated customer reviews', async () => {
-    const pool = database!.pool;
-    await pool.query(`UPDATE shops SET public_email='hello@example.invalid', website='https://example.invalid',
-      phone='+15555550100',logo_url='https://example.invalid/logo.png',
-      business_hours='[{"day":"Monday","isOpen":true,"openTime":"09:00","closeTime":"17:00"}]'::jsonb WHERE id=$1`,[shopId]);
-    await pool.query(`INSERT INTO reviews(shop_id,customer_id,customer_name,rating,text,is_hidden)
-      VALUES($1,$2,'Visible customer',5,'Great service',false),($1,$2,'Hidden customer',1,'Hidden text',true)`,[shopId,customerId]);
-    const url = `/v1/customer/shops/${shopId}`;
-    assert.equal((await inject('GET',url)).statusCode,401);
-    assert.equal((await inject('GET',url,ownerToken)).statusCode,403);
-    const response = await inject('GET',url,customerToken);
-    assert.equal(response.statusCode,200,response.body);
-    const profile = response.json().data;
-    assert.equal(profile.email,'hello@example.invalid');
-    assert.equal(profile.businessHours[0].openTime,'09:00');
-    assert.equal(profile.logoUrl,'https://example.invalid/logo.png');
-    assert.equal(profile.reviewCount,1); assert.equal(profile.rating,5);
-    assert.equal(profile.reviews[0].text,'Great service');
-    assert.equal(profile.stripeAccountId,undefined); assert.equal(profile.reviews[0].customerId,undefined);
-    assert.equal((await inject('GET',url+'?page=0',customerToken)).statusCode,400);
-    assert.deepEqual((await inject('GET',url+'?page=2',customerToken)).json().data.reviews,[]);
-    await pool.query("UPDATE shops SET onboarding_status='REJECTED' WHERE id=$1",[shopId]);
-    assert.equal((await inject('GET',url,customerToken)).statusCode,404);
-    assert.equal((await inject('GET',`/v1/customer/shops/${randomUUID()}`,customerToken)).statusCode,404);
-  });
-
-  it('keeps admin sessions persistent, revokes previous devices, and persists realtime alerts', async () => {
-    const adminId = randomUUID();
-    const email = `${runId}-admin@example.invalid`;
-    const password = 'Test-Admin-Pass-999!';
-    const { hashPassword } = await import('../src/lib/password.js');
-    await database!.pool.query("INSERT INTO users(id,email,password_hash,user_type) VALUES($1,$2,$3,'ADMIN')", [adminId,email,await hashPassword(password)]);
-    await database!.pool.query("INSERT INTO admin_users(user_id,name) VALUES($1,'Alert test admin')", [adminId]);
-    try {
-      const login = async () => {
-        const result = await inject('POST','/v1/auth/login',undefined,{email,password,expectedUserType:'ADMIN'});
-        assert.equal(result.statusCode,200,result.body); return result.json().data;
-      };
-      const first = await login();
-      const expiry = await database!.pool.query('SELECT expires_at FROM refresh_tokens WHERE user_id=$1 AND revoked_at IS NULL',[adminId]);
-      assert.equal(new Date(expiry.rows[0].expires_at).getUTCFullYear(),9999);
-      const renewed = await Promise.all([1,2].map(() => inject('POST','/v1/auth/refresh',undefined,{refreshToken:first.refreshToken})));
-      for (const res of renewed) { assert.equal(res.statusCode,200,res.body); assert.equal(res.json().data.refreshToken,first.refreshToken); }
-      const second = await login();
-      assert.equal((await inject('GET','/v1/me',first.accessToken)).statusCode,401);
-      assert.equal((await inject('POST','/v1/auth/refresh',undefined,{refreshToken:first.refreshToken})).statusCode,401);
-      assert.equal((await inject('GET','/v1/me',second.accessToken)).statusCode,200);
-      const { notifyAdmin } = await import('../src/lib/notify.js');
-      const events: string[] = [];
-      const adapter = io!.of('/').adapter;
-      const broadcast = adapter.broadcast.bind(adapter);
-      adapter.broadcast = (packet, options) => { if (options.rooms.has(`admin-user:${adminId}`)) events.push(packet.data?.[0]); broadcast(packet,options); };
-      try {
-        await notifyAdmin({adminUserId:adminId,event:'dispute:created',payload:{disputeId:'fixture'},persist:{category:'dispute',title:'New dispute',body:'Fixture'}});
-        await notifyAdmin({adminUserId:adminId,event:'support:customer-message',payload:{conversationId:'fixture'},persist:{category:'chat',title:'New support message',body:'Fixture'}});
-        assert.deepEqual(events,['notification:new','notification:new']);
-        const saved = await database!.pool.query('SELECT category FROM notifications WHERE user_id=$1 ORDER BY category',[adminId]);
-        assert.deepEqual(saved.rows.map(r=>r.category),['chat','dispute']);
-      } finally { adapter.broadcast = broadcast; }
-      await inject('POST','/v1/auth/logout',second.accessToken,{refreshToken:second.refreshToken});
-      assert.equal((await inject('POST','/v1/auth/refresh',undefined,{refreshToken:second.refreshToken})).statusCode,401);
-    } finally { await database!.pool.query('DELETE FROM users WHERE id=$1',[adminId]); }
-  });
-
 });

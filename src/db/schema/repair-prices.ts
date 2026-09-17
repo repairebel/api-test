@@ -12,6 +12,8 @@ export const repairPriceSources = pgTable('repair_price_sources', {
 export interface PriceSnapshot {
   pricingSource?: 'dataset' | 'admin' | 'bedrock' | 'fallback';
   customPartName?: string;
+  partType?: string;
+  repairComplexity?: 'user_replaceable' | 'simple' | 'standard' | 'complex';
   modelId?: string;
   promptVersion?: string;
   adminUserId?: string;

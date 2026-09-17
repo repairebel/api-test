@@ -9,8 +9,11 @@ import {
   onboardingSubmissions,
   inventoryItems,
   inventoryMovements,
+  dispatchTargets,
+  offers,
 } from '../../db/schema/index.js';
 import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
+import { dispatchNextShop } from '../dispatch/dispatch.service.js';
 
 interface ListShopsQuery {
   page?: number;
@@ -27,9 +30,10 @@ export async function listShops(query: ListShopsQuery) {
   const conditions: any[] = [];
   if (query.status) {
     if (query.status === 'SUSPENDED') {
-      conditions.push(eq(shops.vacationMode, true));
+      conditions.push(eq(shops.isSuspended, true));
     } else {
       conditions.push(eq(shops.onboardingStatus, query.status as any));
+      if (query.status === 'APPROVED') conditions.push(eq(shops.isSuspended, false));
     }
   }
   if (query.search) {
@@ -50,6 +54,7 @@ export async function listShops(query: ListShopsQuery) {
         id: shops.id,
         name: shops.name,
         onboardingStatus: shops.onboardingStatus,
+        isSuspended: shops.isSuspended,
         vacationMode: shops.vacationMode,
         phone: shops.phone,
         city: shops.city,
@@ -124,16 +129,66 @@ export async function getShopById(shopId: string) {
 }
 
 export async function suspendShop(shopId: string) {
-  const [shop] = await db.select({ id: shops.id }).from(shops).where(eq(shops.id, shopId)).limit(1);
-  if (!shop) throw new AppError(404, ErrorCode.NOT_FOUND, 'Shop not found');
-  await db.update(shops).set({ vacationMode: true, updatedAt: new Date() }).where(eq(shops.id, shopId));
-  return { message: 'Shop suspended (vacation mode enabled)', shopId };
+  const affectedRequestIds = await db.transaction(async (tx) => {
+    const [shop] = await tx.select({ id: shops.id }).from(shops).where(eq(shops.id, shopId)).for('update');
+    if (!shop) throw new AppError(404, ErrorCode.NOT_FOUND, 'Shop not found');
+
+    const activeOffers = await tx
+      .select({ id: offers.id, requestId: offers.requestId, reserveInventoryItemId: offers.reserveInventoryItemId })
+      .from(offers)
+      .where(and(eq(offers.shopId, shopId), eq(offers.status, 'PENDING')));
+    const activeDispatches = await tx
+      .select({ requestId: dispatchTargets.requestId })
+      .from(dispatchTargets)
+      .where(and(
+        eq(dispatchTargets.shopId, shopId),
+        inArray(dispatchTargets.status, ['PENDING', 'SENT', 'SEEN', 'OFFERED']),
+      ));
+
+    await tx.update(shops)
+      .set({ isSuspended: true, updatedAt: new Date() })
+      .where(eq(shops.id, shopId));
+    await tx.update(offers)
+      .set({ status: 'EXPIRED', updatedAt: new Date() })
+      .where(and(eq(offers.shopId, shopId), eq(offers.status, 'PENDING')));
+    await tx.update(dispatchTargets)
+      .set({ status: 'EXPIRED', expiresAt: new Date() })
+      .where(and(
+        eq(dispatchTargets.shopId, shopId),
+        inArray(dispatchTargets.status, ['PENDING', 'SENT', 'SEEN', 'OFFERED']),
+      ));
+
+    for (const offer of activeOffers) {
+      if (!offer.reserveInventoryItemId) continue;
+      await tx.update(inventoryItems)
+        .set({
+          quantityReserved: sql`GREATEST(0, ${inventoryItems.quantityReserved} - 1)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(inventoryItems.id, offer.reserveInventoryItemId));
+      await tx.insert(inventoryMovements).values({
+        inventoryItemId: offer.reserveInventoryItemId,
+        type: 'RELEASED',
+        quantity: 1,
+        referenceId: offer.id,
+        note: 'Released because the shop was suspended by an administrator.',
+      });
+    }
+
+    return [...new Set([
+      ...activeOffers.map((offer) => offer.requestId),
+      ...activeDispatches.map((dispatch) => dispatch.requestId),
+    ])];
+  });
+
+  await Promise.allSettled(affectedRequestIds.map((requestId) => dispatchNextShop(requestId)));
+  return { message: 'Shop suspended', shopId };
 }
 
 export async function activateShop(shopId: string) {
   const [shop] = await db.select({ id: shops.id }).from(shops).where(eq(shops.id, shopId)).limit(1);
   if (!shop) throw new AppError(404, ErrorCode.NOT_FOUND, 'Shop not found');
-  await db.update(shops).set({ vacationMode: false, updatedAt: new Date() }).where(eq(shops.id, shopId));
+  await db.update(shops).set({ isSuspended: false, updatedAt: new Date() }).where(eq(shops.id, shopId));
   return { message: 'Shop activated', shopId };
 }
 

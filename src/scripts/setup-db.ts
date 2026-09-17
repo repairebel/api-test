@@ -8,6 +8,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 
 import { seedPricingCatalog } from '../db/seed-pricing.js';
 import { systemSettings } from '../db/schema/system-settings.js';
+import { appReleases } from '../db/schema/app-releases.js';
 import { getPgConnectionConfig } from '../lib/postgres-config.js';
 
 const { Client, Pool } = pg;
@@ -133,6 +134,18 @@ async function seedSystemSettings(db: ReturnType<typeof drizzle>) {
     .onConflictDoNothing({ target: systemSettings.id });
 }
 
+async function seedAppReleases(db: ReturnType<typeof drizzle>) {
+  const rows = [
+    { app: 'store', platform: 'android', latestVersion: '1.0.0', minRequiredVersion: '1.0.0', storeUrl: 'https://play.google.com/store/apps/details?id=com.store.repairebel', updateMessage: null },
+    { app: 'store', platform: 'ios', latestVersion: '1.0.0', minRequiredVersion: '1.0.0', storeUrl: 'https://apps.apple.com/app/id0000000000', updateMessage: null },
+    { app: 'customer', platform: 'android', latestVersion: '1.0.0', minRequiredVersion: '1.0.0', storeUrl: 'https://play.google.com/store/apps/details?id=com.repairebel', updateMessage: null },
+    { app: 'customer', platform: 'ios', latestVersion: '1.0.0', minRequiredVersion: '1.0.0', storeUrl: 'https://apps.apple.com/app/id0000000000', updateMessage: null },
+  ];
+  for (const row of rows) {
+    await db.insert(appReleases).values(row).onConflictDoNothing({ target: [appReleases.app, appReleases.platform] });
+  }
+}
+
 async function main() {
   const flags = parseFlags(process.argv.slice(2));
   const projectRoot = getProjectRoot();
@@ -158,6 +171,7 @@ async function main() {
     if (!flags.migrateOnly) {
       console.log('Seeding baseline data...');
       await seedSystemSettings(db);
+      await seedAppReleases(db);
       await seedPricingCatalog(pool);
       console.log('Baseline seed complete.');
     }

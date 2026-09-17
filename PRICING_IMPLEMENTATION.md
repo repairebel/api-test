@@ -3,9 +3,9 @@
 For Railway deployment, see `RAILWAY.md`. The compiled pre-deploy setup seeds
 this catalog directly and does not require `database-seed.sql`.
 
-This change belongs to `Repairebel-Server -test`, `Repairebel-Customer`, and
-`Repairebel-Store`. The main server checkout is unchanged. No production deployment
-or migration is part of this work.
+This test checkout mirrors the production `Repairebel-Server` implementation while
+keeping separate Railway services, databases, Redis, and secrets. The customer and
+store clients use the same API contract documented below.
 
 ## Request flow
 
@@ -13,14 +13,14 @@ or migration is part of this work.
    device IDs are retained; the importer adds missing models without deleting the
    old catalog or shop inventory.
 2. The issue screen asks for the repairs priced for that exact device ID.
-3. The price screen receives a model-specific suggested price. This is a required
-   minimum, shown as a read-only value. The customer may offer that amount or more.
+3. The price screen receives a model-specific suggested price as a read-only
+   reference. The customer may offer any valid positive amount.
 4. Before submission, the app refreshes the quote. The API independently looks up
    the selected model and repair, validates the model labels, checks catalog
-   version and offer amount, and saves the floor and its calculation snapshot.
+   version and offer amount, and saves the suggestion and its calculation snapshot.
 5. Dispatch events, customer request details, the store feed and store details all
-   expose the saved floor as `suggestedPriceCents`. `minPriceCents` remains an equal
-   compatibility alias. Store offers are also checked against the saved floor.
+   expose the saved reference as `suggestedPriceCents`. `minPriceCents` remains an
+   equal compatibility alias. Store offers remain checked against the suggestion.
 6. Offer acceptance continues through the existing job/payment workflow. Historical
    requests keep their saved prices after catalog updates.
 
@@ -41,6 +41,8 @@ contact suppliers, send messages, run queue workers, or invoke payment APIs.
   Bedrock Kimi K2.5. During a Bedrock throttle or outage, a short-lived
   catalog-derived estimate keeps the minimum enforceable and is labeled
   `source:"fallback"`; the service retries Bedrock after 15 minutes.
+- Customer offers may be below the suggested price. The Customer app estimates
+  likely store acceptance from the offer's percentage of the suggestion.
 - All prices are treated as USD, matching the existing apps. The workbook itself
   does not specify a currency code.
 
@@ -51,6 +53,21 @@ family, individual model, hardware variant and parts category are separate field
 The database JSON is read back from the corrected Excel workbook. See
 `src/modules/pricing/CATALOG.md` for normalization rules, repair variants,
 compatibility handling, limitations, and reproducible extraction commands.
+
+## Bedrock output contract
+
+The prompt returns either `{"available":false}` or an object containing
+`available:true`, `partType`, `partsCostUsd`, and `repairComplexity`
+(`user_replaceable`, `simple`, `standard`, or `complex`). The parser validates
+that exact structure. The model does not return a suggested total; the server
+calculates generated prices as `ceil(partsCostUsd * 2 + 30)` in whole USD.
+Complexity and part type are saved as metadata; complexity does not currently
+change the fixed labor fee.
+
+Manually entered models have unknown device type so the model can infer their
+class from brand/model instead of treating every device as a smartphone. Quote
+cache identity includes the prompt content hash, so edited prompts generate
+fresh quotes without deleting previous request snapshots.
 
 ## API contract
 
@@ -69,11 +86,11 @@ The quote includes `deviceModelId`, `deviceBrand`, `deviceModel`, `issueType`,
 `source:"fallback"`, `currency:"USD"`,
 `partsCost`, `partsCostCents`, `markupMultiplier`, `laborFeeCents`,
 `suggestedPriceCents`, `minPriceCents`, and `suggestedOfferCents`.
-All three price aliases equal the required floor. Parts medians may include
+All three price aliases equal the suggested reference. Parts medians may include
 fractions of a cent; final payable/offer amounts are integer cents.
 
 Submit `catalogVersion` with the request. A changed version returns 409 and requires
-price review; a price below the floor or mismatched device label returns 400.
+price review; an invalid positive amount or mismatched device label returns 400.
 Unknown models/repairs return 422. The backend disregards client-supplied floor
 fields. Request feeds/detail and dispatch events include `issueDisplayName` so
 new repair variants display correctly.

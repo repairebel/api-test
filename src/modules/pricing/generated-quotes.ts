@@ -55,12 +55,12 @@ export async function getGeneratedQuote(device: {id:string;brand:string;modelNam
       FROM repair_prices p JOIN device_models d ON d.id=p.device_model_id
       WHERE p.active AND (p.device_model_id=$1 OR (p.issue_type=$2 AND d.brand=$3))
       ORDER BY (p.device_model_id=$1) DESC, d.model_name,p.issue_type LIMIT 24`,[device.id,repair.issueType,device.brand]);
-    let price;
+    let price: Awaited<ReturnType<typeof predictBedrockPrice>> | {partsCost: number; suggestedPriceCents: number};
     let pricingSource: PriceSnapshot['pricingSource'] = 'bedrock';
     try {
       price = await bedrockPriceProvider.predict({device:{brand:device.brand,model:device.modelName,type:device.deviceType},
         repair:{category:repair.issueType,partName:repair.customPartName ?? repair.label},
-        referencePartsCosts:references.rows,currency:'USD',laborFeeUsd:30,markupMultiplier:2});
+        referencePartsCosts:references.rows,currency:'USD'});
     } catch (error) {
       // Bedrock can be temporarily throttled or unconfigured. Use comparable
       // harvested costs so the minimum price is still enforceable, and log the
@@ -86,6 +86,7 @@ export async function getGeneratedQuote(device: {id:string;brand:string;modelNam
       aggregation: pricingSource === 'fallback'
         ? 'Catalog fallback while Bedrock is unavailable; ceil(2 × parts + $30) in whole USD'
         : 'AI estimated parts cost; ceil(2 × parts + $30) in whole USD',
+      ...('partType' in price ? {partType:price.partType,repairComplexity:price.repairComplexity} : {}),
       pricingSource,modelId:BEDROCK_MODEL_ID,promptVersion:PRICING_PROMPT_VERSION,expiresAt,
     };
     await client.query(`INSERT INTO generated_repair_quotes(cache_key,snapshot,expires_at) VALUES($1,$2,$3)

@@ -14,7 +14,7 @@ if (!/test/i.test(new URL(databaseUrl).pathname)) throw new Error('The test data
 const mode = process.argv[2] || 'dev';
 const args = mode === 'setup' ? ['src/scripts/setup-db.ts']
   : mode === 'import' ? ['src/scripts/import-repair-prices.ts', '--apply']
-  : mode === 'test' ? ['--test', 'test/pricing.test.ts', 'test/pricing-api.test.ts']
+  : mode === 'test' ? ['--test', 'test/pricing.test.ts', 'test/issue-categories.test.ts', 'test/pricing-api.test.ts']
   : mode === 'dev' ? ['watch', 'src/index.ts'] : null;
 if (!args) throw new Error('Use dev, setup, import, or test');
 const child = spawn(process.execPath, ['node_modules/tsx/dist/cli.mjs', ...args, ...process.argv.slice(3)], {

@@ -5,6 +5,7 @@ import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 import { getIO } from '../../lib/socket.js';
 import { notifyShop, notifyCustomer } from '../../lib/notify.js';
 import { env } from '../../config/env.js';
+import { captureAuthorizedAdjustments, cancelJobAdjustments, getJobTip, getLatestAdjustment, serializeAdjustment, serializeTip } from '../order-payments/order-payments.service.js';
 
 type JobStatus = 'BOOKED' | 'CHECKED_IN' | 'IN_PROGRESS' | 'READY' | 'COMPLETED' | 'DISPUTED' | 'CANCELLED';
 
@@ -119,6 +120,10 @@ export async function getJobForShop(jobId: string, shopId: string) {
     job.shopCompletionVideoUrl ??
     media.find((m) => m.type === 'VIDEO')?.url ??
     null;
+  const [latestAdjustment, tip] = await Promise.all([
+    getLatestAdjustment(jobId),
+    getJobTip(jobId),
+  ]);
 
   return {
     jobId: job.id,
@@ -152,6 +157,8 @@ export async function getJobForShop(jobId: string, shopId: string) {
     })),
     disputeReason: job.disputeReason,
     paymentError: job.paymentError,
+    latestAdjustment: serializeAdjustment(latestAdjustment),
+    tip: serializeTip(tip),
     createdAt: job.createdAt?.toISOString() ?? null,
     timeline: events.map((e) => ({
       id: e.id,
@@ -193,6 +200,10 @@ export async function updateJobStatus(
 
   // Require at least one VIDEO proof before marking as READY
   if (newStatus === 'READY') {
+    const pendingAdjustment = await getLatestAdjustment(jobId);
+    if (pendingAdjustment?.status === 'REQUESTED') {
+      throw new AppError(409, ErrorCode.VALIDATION_ERROR, 'The customer must approve or decline the pending price adjustment before this repair can be marked ready.');
+    }
     const [videoProof] = await db
       .select({ id: jobMedia.id })
       .from(jobMedia)
@@ -234,6 +245,7 @@ export async function updateJobStatus(
 
   // Auto-adjust inventory on CANCELLED: restore stock
   if (newStatus === 'CANCELLED') {
+    await cancelJobAdjustments(jobId);
     try {
       const [offer] = await db
         .select({ reserveInventoryItemId: offers.reserveInventoryItemId })
@@ -382,6 +394,23 @@ export async function updateJobStatus(
     } else if (job.stripePaymentIntentId?.startsWith('pi_mock_')) {
       // Mock capture for testing without Stripe
       await db.update(jobs).set({ paymentStatus: 'CAPTURED', paymentError: null }).where(eq(jobs.id, jobId));
+    }
+
+    try {
+      await captureAuthorizedAdjustments(jobId);
+    } catch (error: any) {
+      if (env.STRIPE_SECRET_KEY && job.stripePaymentIntentId && !job.stripePaymentIntentId.startsWith('pi_mock_')) {
+        try {
+          const Stripe = (await import('stripe')).default;
+          const stripe = new Stripe(env.STRIPE_SECRET_KEY);
+          await stripe.refunds.create({ payment_intent: job.stripePaymentIntentId }, { idempotencyKey: `job-${jobId}-capture-rollback` });
+        } catch (refundError: any) {
+          console.error('Failed to roll back original charge after adjustment capture failure:', refundError.message);
+        }
+      }
+      await db.update(jobs).set({ status: 'IN_PROGRESS', paymentStatus: 'PAYMENT_FAILED', paymentError: error.message, updatedAt: new Date() }).where(eq(jobs.id, jobId));
+      await db.insert(jobStatusEvents).values({ jobId, fromStatus: 'READY', toStatus: 'IN_PROGRESS', note: `Additional payment capture failed: ${error.message}` });
+      throw error;
     }
   }
 

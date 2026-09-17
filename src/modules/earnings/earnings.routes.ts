@@ -9,8 +9,10 @@ import {
 } from './earnings.controller.js';
 
 const earningsRoutes: FastifyPluginAsync = async (fastify) => {
-  // ── Customer confirms receipt → release payment (no shop auth — customer-facing) ──
+  // Legacy customer confirmation endpoint. Authentication and ownership are
+  // still required even though the current app uses /customer/jobs/:jobId/confirm.
   fastify.post('/jobs/:jobId/customer-confirm', {
+    preHandler: [fastify.authenticate],
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
     handler: customerConfirmHandler,
   });

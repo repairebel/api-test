@@ -12,6 +12,11 @@ import {
   customerJobIdParamsSchema,
   confirmJobBodySchema,
   issueTypesQuerySchema,
+  adjustmentIdParamsSchema,
+  confirmAdjustmentBodySchema,
+  createTipBodySchema,
+  tipIdParamsSchema,
+  confirmTipBodySchema,
 } from './customer-requests.schema.js';
 import {
   searchDeviceModels,
@@ -32,6 +37,13 @@ import {
 } from './customer-requests.service.js';
 import { findNearbyShops } from './requests.service.js';
 import { getDatasetIssues } from '../pricing/pricing.service.js';
+import {
+  approveAdjustment,
+  confirmAdjustment,
+  declineAdjustment,
+  createTip,
+  confirmTip,
+} from '../order-payments/order-payments.service.js';
 import {
   successResponse,
   paginatedResponse,
@@ -228,6 +240,46 @@ export async function updatePaymentMethodHandler(request: FastifyRequest, reply:
   const { jobId } = customerJobIdParamsSchema.parse(request.params);
   const result = await updateJobPaymentMethod(jobId, request.user.userId);
   return reply.send(successResponse(result));
+}
+
+function requireCustomer(request: FastifyRequest) {
+  if (!request.user || request.user.userType !== 'CUSTOMER') {
+    throw new AppError(403, ErrorCode.FORBIDDEN, 'This endpoint requires a customer account');
+  }
+  return request.user.userId;
+}
+
+export async function approveAdjustmentHandler(request: FastifyRequest, reply: FastifyReply) {
+  const customerId = requireCustomer(request);
+  const { adjustmentId } = adjustmentIdParamsSchema.parse(request.params);
+  return reply.send(successResponse(await approveAdjustment(adjustmentId, customerId)));
+}
+
+export async function confirmAdjustmentHandler(request: FastifyRequest, reply: FastifyReply) {
+  const customerId = requireCustomer(request);
+  const { adjustmentId } = adjustmentIdParamsSchema.parse(request.params);
+  const { stripePaymentIntentId } = confirmAdjustmentBodySchema.parse(request.body);
+  return reply.send(successResponse(await confirmAdjustment(adjustmentId, customerId, stripePaymentIntentId)));
+}
+
+export async function declineAdjustmentHandler(request: FastifyRequest, reply: FastifyReply) {
+  const customerId = requireCustomer(request);
+  const { adjustmentId } = adjustmentIdParamsSchema.parse(request.params);
+  return reply.send(successResponse(await declineAdjustment(adjustmentId, customerId)));
+}
+
+export async function createTipHandler(request: FastifyRequest, reply: FastifyReply) {
+  const customerId = requireCustomer(request);
+  const { jobId } = customerJobIdParamsSchema.parse(request.params);
+  const { amountCents } = createTipBodySchema.parse(request.body);
+  return reply.send(successResponse(await createTip(jobId, customerId, amountCents)));
+}
+
+export async function confirmTipHandler(request: FastifyRequest, reply: FastifyReply) {
+  const customerId = requireCustomer(request);
+  const { tipId } = tipIdParamsSchema.parse(request.params);
+  const { stripePaymentIntentId } = confirmTipBodySchema.parse(request.body);
+  return reply.send(successResponse(await confirmTip(tipId, customerId, stripePaymentIntentId)));
 }
 
 // GET /v1/customer/nearby-shops?lat=...&lng=...&radius=...

@@ -4,6 +4,7 @@ import {
   listJobsHandler,
   getJobHandler,
   updateJobStatusHandler,
+  requestAdjustmentHandler,
 } from './jobs.controller.js';
 
 const jobsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -26,6 +27,12 @@ const jobsRoutes: FastifyPluginAsync = async (fastify) => {
     preHandler: [fastify.authenticate, requireApproved],
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
     handler: updateJobStatusHandler,
+  });
+
+  fastify.post('/jobs/:jobId/adjustments', {
+    preHandler: [fastify.authenticate, requireApproved],
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    handler: requestAdjustmentHandler,
   });
 };
 

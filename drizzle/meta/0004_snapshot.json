@@ -1,6 +1,6 @@
 {
-  "id": "e5fae4d2-f043-491e-b6ca-6c40c671b82e",
-  "prevId": "30641c71-4576-47d8-9692-b0092cfab5ea",
+  "id": "6d3b2fa9-101f-42c1-bcd7-2ed19b223998",
+  "prevId": "5b4aa26f-35ba-43df-9c89-06e129347e22",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -83,6 +83,91 @@
           ]
         }
       },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.app_releases": {
+      "name": "app_releases",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "app": {
+          "name": "app",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "platform": {
+          "name": "platform",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "latest_version": {
+          "name": "latest_version",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_required_version": {
+          "name": "min_required_version",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "store_url": {
+          "name": "store_url",
+          "type": "varchar(512)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "update_message": {
+          "name": "update_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "app_releases_app_platform_idx": {
+          "name": "app_releases_app_platform_idx",
+          "columns": [
+            {
+              "expression": "app",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "platform",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -397,13 +482,6 @@
           "type": "varchar(150)",
           "primaryKey": false,
           "notNull": false
-        },
-        "is_admin_override": {
-          "name": "is_admin_override",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "created_at": {
           "name": "created_at",
@@ -4350,13 +4428,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": true
-        },
-        "is_admin_override": {
-          "name": "is_admin_override",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "snapshot": {
           "name": "snapshot",

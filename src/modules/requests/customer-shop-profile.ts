@@ -12,7 +12,11 @@ export async function getCustomerShopProfile(shopId: string, page = 1) {
     state: shops.state, zipCode: shops.zipCode, country: shops.country,
     latitude: shops.latitude, longitude: shops.longitude,
     businessHours: shops.businessHours, categories: shops.categories,
-  }).from(shops).where(and(eq(shops.id, shopId), eq(shops.onboardingStatus, 'APPROVED'))).limit(1);
+  }).from(shops).where(and(
+    eq(shops.id, shopId),
+    eq(shops.onboardingStatus, 'APPROVED'),
+    eq(shops.isSuspended, false),
+  )).limit(1);
   if (!shop) throw new AppError(404, ErrorCode.NOT_FOUND, 'Store profile is unavailable.');
   const visible = and(eq(reviews.shopId, shopId), eq(reviews.isHidden, false));
   const [summary] = await db.select({ total: count(), rating: avg(reviews.rating) }).from(reviews).where(visible);

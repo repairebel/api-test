@@ -5,6 +5,8 @@ import {
   updateJobStatus,
 } from './jobs.service.js';
 import { successResponse, paginatedResponse } from '../../plugins/error-handler.plugin.js';
+import { requestAdjustment } from '../order-payments/order-payments.service.js';
+import { z } from 'zod';
 
 // GET /v1/shops/me/jobs?status=BOOKED&page=1&pageSize=20
 export async function listJobsHandler(request: FastifyRequest, reply: FastifyReply) {
@@ -33,4 +35,15 @@ export async function updateJobStatusHandler(request: FastifyRequest, reply: Fas
   const { status, note } = request.body as { status: string; note?: string };
   const result = await updateJobStatus(jobId, shopId, status as any, note);
   return reply.send(successResponse(result));
+}
+
+const adjustmentBodySchema = z.object({
+  adjustmentCents: z.number().int().min(100).max(500000),
+});
+
+export async function requestAdjustmentHandler(request: FastifyRequest, reply: FastifyReply) {
+  const { jobId } = request.params as { jobId: string };
+  const { adjustmentCents } = adjustmentBodySchema.parse(request.body);
+  const result = await requestAdjustment(jobId, request.user!.shopId, adjustmentCents);
+  return reply.status(201).send(successResponse(result));
 }

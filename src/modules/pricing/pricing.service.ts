@@ -67,7 +67,8 @@ export async function getDatasetQuote(input: {
     id: input.deviceModelId,
     brand: input.deviceBrand.trim(),
     modelName: input.deviceModel.trim(),
-    deviceType: 'Smartphone',
+    // Manual models may be wearables, tablets, or computers. Let AI infer the class.
+    deviceType: 'Unknown',
     modelNumber: null,
     createdAt: new Date(),
   } : null);
@@ -104,7 +105,7 @@ export function assertCustomerPrice(offerCents: number, quote: { suggestedPriceC
   if (catalogVersion && catalogVersion !== quote.catalogVersion) {
     throw new AppError(409, ErrorCode.CONFLICT, 'Suggested pricing has changed. Review the updated price before sending your request.', { suggestedPriceCents: quote.suggestedPriceCents, catalogVersion: quote.catalogVersion });
   }
-  if (!Number.isSafeInteger(offerCents) || offerCents < quote.suggestedPriceCents || offerCents > 2147483647) {
-    throw new AppError(400, ErrorCode.VALIDATION_ERROR, `Your offer must be at least the suggested price ($${(quote.suggestedPriceCents / 100).toFixed(2)}).`, { suggestedPriceCents: quote.suggestedPriceCents });
+  if (!Number.isSafeInteger(offerCents) || offerCents <= 0 || offerCents > 2147483647) {
+    throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Enter a valid positive offer with no more than two decimal places.', { suggestedPriceCents: quote.suggestedPriceCents });
   }
 }

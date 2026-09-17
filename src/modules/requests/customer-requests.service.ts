@@ -15,6 +15,7 @@ import {
   jobMedia,
   payouts,
   reviews,
+  orderAdjustments,
 } from '../../db/schema/index.js';
 import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 import { generateCloudinarySignature } from '../media/media.service.js';
@@ -29,6 +30,7 @@ import { notifyShop, notifyCustomer } from '../../lib/notify.js';
 import { sendOrderBookingConfirmationEmail } from '../../lib/email.js';
 import { ensureStripeCustomerForUser } from '../../lib/stripe-customers.js';
 import { env } from '../../config/env.js';
+import { getJobTip, getLatestAdjustment, serializeAdjustment, serializeTip } from '../order-payments/order-payments.service.js';
 
 const SETTINGS_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -550,10 +552,17 @@ export async function acceptOffer(offerId: string, customerId: string) {
 
     // 3. Get shop's Stripe Connect account
     const [shop] = await tx
-      .select({ stripeAccountId: shops.stripeAccountId, name: shops.name })
+      .select({
+        stripeAccountId: shops.stripeAccountId,
+        name: shops.name,
+        isSuspended: shops.isSuspended,
+      })
       .from(shops)
       .where(eq(shops.id, offer.shopId))
-      .limit(1);
+      .for('update');
+    if (!shop || shop.isSuspended) {
+      throw new AppError(409, ErrorCode.VALIDATION_ERROR, 'This shop is suspended and its offer is no longer available.');
+    }
 
     // 4. Calculate platform fee from admin settings
     const commissionPercent = await getOrderCommissionPercent();
@@ -956,10 +965,13 @@ export async function confirmOfferPayment(
 
     // Get shop name
     const [shop] = await tx
-      .select({ name: shops.name })
+      .select({ name: shops.name, isSuspended: shops.isSuspended })
       .from(shops)
       .where(eq(shops.id, offer.shopId))
-      .limit(1);
+      .for('update');
+    if (!shop || shop.isSuspended) {
+      throw new AppError(409, ErrorCode.VALIDATION_ERROR, 'This shop is suspended and its offer is no longer available.');
+    }
 
     // Get customer info for email
     const [customerUser] = await tx
@@ -1388,6 +1400,10 @@ export async function getCustomerJobDetail(jobId: string, customerId: string) {
     .from(jobStatusEvents)
     .where(eq(jobStatusEvents.jobId, jobId))
     .orderBy(jobStatusEvents.createdAt);
+  const [latestAdjustment, tip] = await Promise.all([
+    getLatestAdjustment(jobId),
+    getJobTip(jobId),
+  ]);
 
   return {
     ...job,
@@ -1396,6 +1412,8 @@ export async function getCustomerJobDetail(jobId: string, customerId: string) {
     shopRating: Number(ratingResult?.avgRating ?? 0),
     shopReviewCount: Number(ratingResult?.totalReviews ?? 0),
     hasReview: !!existingReview,
+    latestAdjustment: serializeAdjustment(latestAdjustment),
+    tip: serializeTip(tip),
     scheduledAt: job.scheduledAt?.toISOString() ?? null,
     completedAt: job.completedAt?.toISOString() ?? null,
     createdAt: job.createdAt?.toISOString() ?? null,
@@ -1436,7 +1454,16 @@ export async function confirmCustomerJob(
       : Math.round(job.priceCents * ((await getOrderCommissionPercent()) / 100));
   const netAmountCents = job.priceCents - platformFeeCents;
 
-  // ── Transfer funds from platform balance → shop's Stripe Connected Account ──
+  const capturedAdjustments = await db
+    .select()
+    .from(orderAdjustments)
+    .where(and(eq(orderAdjustments.jobId, job.id), eq(orderAdjustments.status, 'CAPTURED')))
+    .orderBy(orderAdjustments.createdAt);
+  const adjustmentGrossCents = capturedAdjustments.reduce((sum, item) => sum + item.adjustmentCents, 0);
+  const baseGrossCents = job.priceCents - adjustmentGrossCents;
+
+  // Each authorization has its own Stripe charge, so transfer its share of the
+  // payout separately. Together they equal the order total minus commission.
   let stripeTransferId: string | null = null;
 
   const [shop] = await db
@@ -1457,32 +1484,42 @@ export async function confirmCustomerJob(
     try {
       const Stripe = (await import('stripe')).default;
       const stripe = new Stripe(env.STRIPE_SECRET_KEY);
-
-      // Retrieve the charge ID so we can attach source_transaction
-      const pi = await stripe.paymentIntents.retrieve(job.stripePaymentIntentId);
-      const chargeId =
-        typeof pi.latest_charge === 'string'
-          ? pi.latest_charge
-          : pi.latest_charge?.id;
-
-      const transferParams: any = {
-        amount: netAmountCents,
-        currency: 'usd',
-        destination: acct,
-        transfer_group: job.id,
-        metadata: { jobId: job.id, shopId: job.shopId, platformFeeCents },
+      let allocatedFeeCents = 0;
+      const transferPayment = async (paymentIntentId: string, grossCents: number, feeCents: number, key: string, adjustmentId?: string) => {
+        if (grossCents <= 0) return null;
+        const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+        const chargeId = typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id;
+        const transfer = await stripe.transfers.create({
+          amount: grossCents - feeCents,
+          currency: 'usd',
+          destination: acct,
+          transfer_group: job.id,
+          ...(chargeId ? { source_transaction: chargeId } : {}),
+          metadata: { jobId: job.id, shopId: job.shopId, platformFeeCents: String(feeCents), ...(adjustmentId ? { adjustmentId } : {}) },
+        }, { idempotencyKey: key });
+        return transfer.id;
       };
-      if (chargeId) {
-        transferParams.source_transaction = chargeId;
-      }
 
-      const transfer = await stripe.transfers.create(transferParams);
-      stripeTransferId = transfer.id;
-      console.log(
-        `💸 Transfer ${transfer.id} — $${(netAmountCents / 100).toFixed(2)} → ${acct} (fee $${(platformFeeCents / 100).toFixed(2)})`,
-      );
+      const baseFeeCents = capturedAdjustments.length
+        ? Math.round(platformFeeCents * (baseGrossCents / job.priceCents))
+        : platformFeeCents;
+      allocatedFeeCents += baseFeeCents;
+      stripeTransferId = await transferPayment(job.stripePaymentIntentId, baseGrossCents, baseFeeCents, `job-${job.id}-base-transfer`);
+
+      for (let index = 0; index < capturedAdjustments.length; index += 1) {
+        const adjustment = capturedAdjustments[index];
+        if (!adjustment.stripePaymentIntentId || adjustment.stripePaymentIntentId.startsWith('pi_mock_')) continue;
+        const isLast = index === capturedAdjustments.length - 1;
+        const feeCents = isLast
+          ? platformFeeCents - allocatedFeeCents
+          : Math.round(platformFeeCents * (adjustment.adjustmentCents / job.priceCents));
+        allocatedFeeCents += feeCents;
+        const transferId = await transferPayment(adjustment.stripePaymentIntentId, adjustment.adjustmentCents, feeCents, `adjustment-${adjustment.id}-transfer`, adjustment.id);
+        await db.update(orderAdjustments).set({ stripeTransferId: transferId, updatedAt: new Date() }).where(eq(orderAdjustments.id, adjustment.id));
+      }
     } catch (err: any) {
       console.error('⚠️ Stripe Transfer failed:', err.message);
+      throw new AppError(502, ErrorCode.INTERNAL_ERROR, 'Payment is secured, but the store transfer could not be completed. Please try again.');
     }
   }
 
@@ -1503,7 +1540,7 @@ export async function confirmCustomerJob(
     jobId: job.id,
     fromStatus: 'READY',
     toStatus: 'COMPLETED',
-    note: `Customer confirmed repair. $${(netAmountCents / 100).toFixed(2)} transferred to shop (7 % platform fee: $${(platformFeeCents / 100).toFixed(2)}).`,
+    note: `Customer confirmed repair. $${(netAmountCents / 100).toFixed(2)} transferred to shop (platform fee: $${(platformFeeCents / 100).toFixed(2)}).`,
   });
 
   // Create payout record for earnings tracking

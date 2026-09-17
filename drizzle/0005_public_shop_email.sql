@@ -1,1 +1,0 @@
-ALTER TABLE "shops" ADD COLUMN "public_email" varchar(255);

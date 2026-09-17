@@ -327,6 +327,15 @@ export async function createOffer(
     reserveInventoryItemId?: string;
   },
 ) {
+  const [shopState] = await db
+    .select({ isSuspended: shops.isSuspended })
+    .from(shops)
+    .where(eq(shops.id, shopId))
+    .limit(1);
+  if (!shopState || shopState.isSuspended) {
+    throw new AppError(403, ErrorCode.FORBIDDEN, 'This shop has been suspended and cannot submit offers.');
+  }
+
   // 1. Verify the request exists and is live
   const [request] = await db
     .select()
@@ -552,10 +561,16 @@ export async function customerAcceptOffer(offerId: string) {
 
     // 3. Get shop's Stripe Connect account
     const [shop] = await tx
-      .select({ stripeAccountId: shops.stripeAccountId })
+      .select({
+        stripeAccountId: shops.stripeAccountId,
+        isSuspended: shops.isSuspended,
+      })
       .from(shops)
       .where(eq(shops.id, offer.shopId))
       .limit(1);
+    if (!shop || shop.isSuspended) {
+      throw new AppError(409, ErrorCode.VALIDATION_ERROR, 'This shop is suspended and its offer is no longer available.');
+    }
 
     const shopStripeAccountId = shop?.stripeAccountId ?? null;
 
@@ -834,7 +849,10 @@ export async function findNearbyShops(lat: number, lng: number, radiusKm = 50) {
       vacationMode: shops.vacationMode,
     })
     .from(shops)
-    .where(eq(shops.onboardingStatus, 'APPROVED'));
+    .where(and(
+      eq(shops.onboardingStatus, 'APPROVED'),
+      eq(shops.isSuspended, false),
+    ));
 
   // Filter by distance (Haversine)
   return rows

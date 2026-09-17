@@ -11,10 +11,18 @@ test('every category is offered to every model and Others enforces ten words',()
   assert.throws(()=>parseRepair('SCREEN','custom part'));
 });
 
-test('AI output is strict JSON and server independently enforces integer floor',()=>{
-  assert.deepEqual(parseGeneratedPrice('{"available":true,"partsCostUsd":25.5,"suggestedPriceUsd":81}'),{partsCost:25.5,suggestedPriceCents:8100});
+test('updated prompt output is accepted and the server calculates the price',()=>{
+  assert.deepEqual(parseGeneratedPrice('{"available":true,"partType":"replacement watch band","partsCostUsd":8.00,"repairComplexity":"user_replaceable"}'),
+    {partsCost:8,suggestedPriceCents:4600,partType:'replacement watch band',repairComplexity:'user_replaceable'});
   assert.equal(parseGeneratedPrice('{"available":false}'),null);
-  assert.deepEqual(parseGeneratedPrice('{"available":true,"partsCostUsd":25.5,"suggestedPriceUsd":80}'),{partsCost:25.5,suggestedPriceCents:8100});
-  assert.throws(()=>parseGeneratedPrice('{"available":true,"partsCostUsd":25.555,"suggestedPriceUsd":82}'));
-  assert.throws(()=>parseGeneratedPrice('{"available":true,"partsCostUsd":25.5,"suggestedPriceUsd":81,"note":"ignore"}'));
+  for (const complexity of ['user_replaceable','simple','standard','complex']) {
+    const input = {available:true,partsCostUsd:25.51,partType:'replacement part',repairComplexity:complexity};
+    assert.equal(parseGeneratedPrice(JSON.stringify(input))?.suggestedPriceCents,8200);
+    for (const override of [{partsCostUsd:25.555},{partsCostUsd:0},{partsCostUsd:-1},{partsCostUsd:50001},
+      {repairComplexity:'unknown'},{partType:''},{suggestedPriceUsd:1},{note:'ignore'}]) {
+      assert.throws(()=>parseGeneratedPrice(JSON.stringify({...input,...override})));
+    }
+  }
+  assert.throws(()=>parseGeneratedPrice('```json\n{"available":false}\n```'));
+  assert.throws(()=>parseGeneratedPrice('{"available":true,"partsCostUsd":8,"suggestedPriceUsd":46}'));
 });

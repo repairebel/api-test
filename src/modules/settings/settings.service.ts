@@ -43,6 +43,7 @@ export async function getShopProfile(shopId: string) {
       serviceRadius: shops.serviceRadius,
       placeId: shops.placeId,
       businessHours: shops.businessHours,
+      isSuspended: shops.isSuspended,
       vacationMode: shops.vacationMode,
       warrantyEnabled: shops.warrantyEnabled,
       defaultWarrantyDays: shops.defaultWarrantyDays,

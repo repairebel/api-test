@@ -42,6 +42,7 @@ export const shops = pgTable('shops', {
   stripePayoutStatusSyncedAt: timestamp('stripe_payout_status_synced_at', { withTimezone: true }),
 
   // General
+  isSuspended: boolean('is_suspended').notNull().default(false),
   vacationMode: boolean('vacation_mode').notNull().default(false),
   phone: varchar('phone', { length: 30 }),
   publicEmail: varchar('public_email', { length: 255 }),

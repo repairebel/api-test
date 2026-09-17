@@ -6,12 +6,15 @@ import {
   cashout,
   refreshPayoutStatuses,
 } from './earnings.service.js';
-import { successResponse, paginatedResponse } from '../../plugins/error-handler.plugin.js';
+import { successResponse, paginatedResponse, AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 
 // POST /v1/jobs/:jobId/customer-confirm
 export async function customerConfirmHandler(request: FastifyRequest, reply: FastifyReply) {
+  if (!request.user || request.user.userType !== 'CUSTOMER') {
+    throw new AppError(403, ErrorCode.FORBIDDEN, 'This endpoint requires a customer account');
+  }
   const { jobId } = request.params as { jobId: string };
-  const result = await customerConfirmJob(jobId);
+  const result = await customerConfirmJob(jobId, request.user.userId);
   return reply.send(successResponse(result));
 }
 

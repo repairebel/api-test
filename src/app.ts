@@ -30,6 +30,7 @@ import disputesRoutes from './modules/disputes/disputes.routes.js';
 import customerSettingsRoutes from './modules/customer-settings/customer-settings.routes.js';
 import notificationsRoutes from './modules/notifications/notifications.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
+import appVersionRoutes from './modules/app-version/app-version.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -219,6 +220,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // ── API v1 routes ──
+  // Public app version check for mobile force-update.
+  await app.register(appVersionRoutes, { prefix: '/v1' });
   await app.register(authRoutes, { prefix: '/v1' });
   await app.register(onboardingRoutes, { prefix: '/v1' });
   await app.register(requestsRoutes, { prefix: '/v1' });

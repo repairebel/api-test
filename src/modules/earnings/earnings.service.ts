@@ -138,11 +138,11 @@ async function emitCashoutStatus(
 
 // ─── Customer confirms receipt → auto-release payment ───
 
-export async function customerConfirmJob(jobId: string) {
+export async function customerConfirmJob(jobId: string, customerId: string) {
   const [job] = await db
     .select()
     .from(jobs)
-    .where(eq(jobs.id, jobId))
+    .where(and(eq(jobs.id, jobId), eq(jobs.customerId, customerId)))
     .limit(1);
 
   if (!job) {

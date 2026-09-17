@@ -341,13 +341,17 @@ async function claimDispatchSlots(
     expires_at: Date | null;
   }>(sql`
     WITH next_dispatches AS (
-      SELECT id
-      FROM dispatch_targets
-      WHERE request_id = ${requestId}
-        AND status = 'PENDING'
-      ORDER BY score DESC NULLS LAST, created_at ASC
+      SELECT dt.id
+      FROM dispatch_targets dt
+      INNER JOIN shops s ON s.id = dt.shop_id
+      WHERE dt.request_id = ${requestId}
+        AND dt.status = 'PENDING'
+        AND s.onboarding_status = 'APPROVED'
+        AND s.is_suspended = false
+        AND s.vacation_mode = false
+      ORDER BY dt.score DESC NULLS LAST, dt.created_at ASC
       LIMIT ${slots}
-      FOR UPDATE SKIP LOCKED
+      FOR UPDATE OF dt SKIP LOCKED
     )
     UPDATE dispatch_targets AS dt
     SET status = 'SENT',
@@ -546,6 +550,7 @@ export async function startDispatch(
       )) AS distance_km
     FROM shops s
     WHERE s.onboarding_status = 'APPROVED'
+      AND s.is_suspended = false
       AND s.vacation_mode = false
       AND s.latitude IS NOT NULL
       AND s.longitude IS NOT NULL
@@ -725,6 +730,15 @@ export async function timeoutDispatch(dispatchId: string, requestId: string) {
 export async function acceptDispatch(dispatchId: string, shopId: string) {
   // Use a transaction with row-level locking
   return await db.transaction(async (tx) => {
+    const [shopState] = await tx
+      .select({ isSuspended: shops.isSuspended })
+      .from(shops)
+      .where(eq(shops.id, shopId))
+      .for('update');
+    if (!shopState || shopState.isSuspended) {
+      throw new AppError(403, ErrorCode.FORBIDDEN, 'This shop has been suspended and cannot accept new orders.');
+    }
+
     // 1. Lock the dispatch row and verify
     const dispatchResult = await tx.execute<{
       id: string;
