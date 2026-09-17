@@ -37,6 +37,24 @@ const envSchema = z.object({
 
   // OpenAI (optional — for AI support chat)
   OPENAI_API_KEY: z.string().optional(),
+
+  // Operations monitoring. Railway injects the metadata variables automatically.
+  // Use RAILWAY_API_TOKEN for an account/workspace token or RAILWAY_TOKEN for a
+  // project token. Tokens are read only by the API and are never returned.
+  RAILWAY_API_TOKEN: z.string().optional(),
+  RAILWAY_TOKEN: z.string().optional(),
+  RAILWAY_PROJECT_ID: z.string().optional(),
+  RAILWAY_PROJECT_NAME: z.string().optional(),
+  RAILWAY_ENVIRONMENT_ID: z.string().optional(),
+  RAILWAY_ENVIRONMENT_NAME: z.string().optional(),
+  RAILWAY_SERVICE_ID: z.string().optional(),
+  RAILWAY_SERVICE_NAME: z.string().optional(),
+  RAILWAY_DEPLOYMENT_ID: z.string().optional(),
+  RAILWAY_REPLICA_ID: z.string().optional(),
+  RAILWAY_REPLICA_REGION: z.string().optional(),
+  RAILWAY_GIT_COMMIT_SHA: z.string().optional(),
+  RAILWAY_GIT_BRANCH: z.string().optional(),
+  HEALTH_MONITOR_INTERVAL_MS: z.coerce.number().int().min(5_000).max(300_000).default(5_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

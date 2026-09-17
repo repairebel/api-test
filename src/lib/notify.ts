@@ -4,7 +4,7 @@ import { getShopOwnerUserId } from './push-helpers.js';
 import { createNotification, CreateNotificationInput } from '../modules/notifications/notifications.service.js';
 import { db } from '../db/client.js';
 import { customerNotificationPrefs, users, adminUsers } from '../db/schema/index.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 
 type NotificationCategory = CreateNotificationInput['category'];
 
@@ -38,6 +38,8 @@ interface NotifyCustomerOptions {
 
 interface NotifyAdminOptions {
   adminUserId?: string;
+  /** Limit delivery to selected admin roles. Omit to notify every active admin. */
+  adminRoles?: Array<'super_admin' | 'admin' | 'moderator'>;
   event: string;
   payload: Record<string, unknown>;
   /** Persist in notification history (requires adminUserId) */
@@ -184,12 +186,21 @@ export async function notifyCustomer({ customerId, event, payload, push, persist
  * Emit a socket event to the admin room.
  * Optionally persists the notification for a specific admin user.
  */
-export async function notifyAdmin({ adminUserId, event, payload, persist }: NotifyAdminOptions): Promise<void> {
-  try { getIO().to('admin').emit(event, payload); } catch { /* Persist even without sockets. */ }
+export async function notifyAdmin({ adminUserId, adminRoles, event, payload, persist }: NotifyAdminOptions): Promise<void> {
+  try {
+    const target = adminRoles?.length === 1 ? `admin-role:${adminRoles[0]}` : 'admin';
+    getIO().to(target).emit(event, payload);
+  } catch { /* Persist even without sockets. */ }
   if (!persist) return;
   const recipients = await db.select({ id: users.id }).from(users)
     .innerJoin(adminUsers, eq(adminUsers.userId, users.id))
-    .where(and(eq(users.userType, 'ADMIN'), eq(users.status, 'ACTIVE'), eq(adminUsers.status, 'active'), adminUserId ? eq(users.id, adminUserId) : undefined));
+    .where(and(
+      eq(users.userType, 'ADMIN'),
+      eq(users.status, 'ACTIVE'),
+      eq(adminUsers.status, 'active'),
+      adminUserId ? eq(users.id, adminUserId) : undefined,
+      adminRoles?.length ? inArray(adminUsers.role, adminRoles) : undefined,
+    ));
   for (const user of recipients) {
     const notification = await createNotification({ userId: user.id, targetType: 'ADMIN', ...persist, data: persist.data ?? payload });
     try { getIO().to(`admin-user:${user.id}`).emit('notification:new', notification); } catch { /* Available on next fetch. */ }

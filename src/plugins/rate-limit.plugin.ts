@@ -9,6 +9,10 @@ const rateLimitPlugin: FastifyPluginAsync = async (fastify) => {
     max: 100,
     timeWindow: '1 minute',
     redis,
+    // A cache incident must not break Railway's liveness probe or every API
+    // request. Other controls (JWT, RBAC, validation) continue to apply.
+    allowList: (request) => request.url === '/health',
+    skipOnError: true,
     keyGenerator: (request) => {
       // Use X-Forwarded-For if behind a proxy, otherwise IP
       return request.headers['x-forwarded-for']?.toString().split(',')[0]?.trim()

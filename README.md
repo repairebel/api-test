@@ -82,6 +82,12 @@ STRIPE_WEBHOOK_SECRET=
 STRIPE_PUBLISHABLE_KEY=
 OPENAI_API_KEY=
 
+# Optional Railway deployment verification for the super-admin health monitor.
+# Use one token type only. Keep it on the API service; never expose it to Vite/mobile apps.
+RAILWAY_API_TOKEN=
+# RAILWAY_TOKEN=  # Project token alternative
+HEALTH_MONITOR_INTERVAL_MS=5000
+
 # Suggested-price AI (Amazon Bedrock Kimi K2.5)
 AWS_REGION=us-east-1
 AWS_BEARER_TOKEN_BEDROCK=
@@ -137,6 +143,19 @@ npm run dev
 ```
 
 The API will be available at `http://localhost:6664`.
+
+## Super-admin system health
+
+The API continuously checks PostgreSQL, Redis, BullMQ workers, request latency/error
+rates, runtime resources, and the current Railway deployment. A state change is sent
+to the `admin-role:super_admin` Socket.IO room and saved as an Admin notification.
+The detailed endpoint is `GET /v1/admin/system-health` and rejects non-super-admin
+accounts. Railway automatically supplies the project, environment, service,
+deployment, region, replica, and Git metadata shown by the Admin page.
+
+To validate the live Railway deployment, add either `RAILWAY_API_TOKEN` (account or
+workspace token) or `RAILWAY_TOKEN` (project token) to the API service variables.
+The token is used server-side only and is never included in the health response.
 
 ## Available Scripts
 

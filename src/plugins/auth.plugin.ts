@@ -3,7 +3,7 @@ import fp from 'fastify-plugin';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { users } from '../db/schema/index.js';
+import { users, adminUsers } from '../db/schema/index.js';
 import { verifyAccessToken, DecodedAccessToken } from '../lib/tokens.js';
 import { redis } from '../lib/redis.js';
 import { AppError, ErrorCode } from './error-handler.plugin.js';
@@ -78,7 +78,14 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     // Check if token is blacklisted (e.g. after logout)
-    const isBlacklisted = await redis.exists(`bl:${decoded.jti}`);
+    let isBlacklisted = 0;
+    try {
+      isBlacklisted = await redis.exists(`bl:${decoded.jti}`);
+    } catch {
+      // Continue to the database-backed account/session checks. This keeps the
+      // super-admin diagnostics available during a Redis incident.
+      request.log.warn('Redis blacklist check unavailable; using JWT and database session checks');
+    }
     if (isBlacklisted) {
       throw new AppError(401, ErrorCode.UNAUTHORIZED, 'Token has been revoked');
     }
@@ -194,6 +201,23 @@ export function requireUserType(...types: Array<'CUSTOMER' | 'SHOP_OWNER' | 'ADM
     }
     if (!types.includes(request.user.userType)) {
       throw new AppError(403, ErrorCode.FORBIDDEN, 'This endpoint is not available for your account type');
+    }
+  };
+}
+
+/** Enforce an Admin Console role using the server-side admin profile. */
+export function requireAdminRole(...roles: Array<'super_admin' | 'admin' | 'moderator'>) {
+  return async (request: FastifyRequest, _reply: FastifyReply) => {
+    if (!request.user || request.user.userType !== 'ADMIN') {
+      throw new AppError(401, ErrorCode.UNAUTHORIZED, 'Not authenticated as an administrator');
+    }
+    const [profile] = await db
+      .select({ role: adminUsers.role, status: adminUsers.status })
+      .from(adminUsers)
+      .where(eq(adminUsers.userId, request.user.userId))
+      .limit(1);
+    if (!profile || profile.status !== 'active' || !roles.includes(profile.role)) {
+      throw new AppError(403, ErrorCode.FORBIDDEN, 'This page is restricted to super administrators');
     }
   };
 }

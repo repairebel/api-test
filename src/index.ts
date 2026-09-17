@@ -5,6 +5,7 @@ import { redis } from './lib/redis.js';
 import { pool } from './db/client.js';
 import { initSocketIO } from './lib/socket.js';
 import { startOfferExpiryWorker, startDispatchTimeoutWorker, startPayoutReleaseWorker } from './lib/queue.js';
+import { startSystemHealthMonitor, stopSystemHealthMonitor } from './lib/system-health.js';
 
 async function main() {
   const app = await buildApp();
@@ -47,10 +48,12 @@ async function main() {
   startOfferExpiryWorker();
   startDispatchTimeoutWorker();
   startPayoutReleaseWorker();
+  startSystemHealthMonitor();
 
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     app.log.info(`${signal} received — shutting down gracefully…`);
+    stopSystemHealthMonitor();
     await app.close();
     await redis.quit();
     await pool.end();

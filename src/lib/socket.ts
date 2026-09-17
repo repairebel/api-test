@@ -134,15 +134,25 @@ export function initSocketIO(httpServer: HttpServer): SocketIOServer {
 
     // Allow admin clients to join the admin room (for real-time dashboard notifications)
     let adminCheck: ReturnType<typeof setInterval> | undefined;
+    let socketAdminRole: string | null = null;
     const authenticateAdmin = async () => {
       try {
         const token = verifyAccessToken(socket.handshake.auth?.token);
-        if (token.userType !== 'ADMIN' || await redis.exists(`bl:${token.jti}`)) throw new Error('Unauthorized');
+        if (token.userType !== 'ADMIN') throw new Error('Unauthorized');
+        try {
+          if (await redis.exists(`bl:${token.jti}`)) throw new Error('Unauthorized');
+        } catch (error) {
+          if (error instanceof Error && error.message === 'Unauthorized') throw error;
+          console.warn('Redis blacklist check unavailable for admin socket; using JWT and database session checks');
+        }
         const [user] = await db.select().from(users).where(eq(users.id, token.sub)).limit(1);
         const [profile] = await db.select().from(adminUsers).where(eq(adminUsers.userId, token.sub)).limit(1);
         if (!user || user.status === 'SUSPENDED' || !profile || profile.status === 'suspended' || (token.sessionVersion ?? 0) !== user.sessionVersion) throw new Error('Session ended');
         if (!socket.connected) return;
         await socket.join('admin');
+        if (socketAdminRole && socketAdminRole !== profile.role) await socket.leave(`admin-role:${socketAdminRole}`);
+        await socket.join(`admin-role:${profile.role}`);
+        socketAdminRole = profile.role;
         await socket.join(`admin-user:${token.sub}`);
       } catch { socket.disconnect(true); }
     };
@@ -154,6 +164,8 @@ export function initSocketIO(httpServer: HttpServer): SocketIOServer {
 
     socket.on('leave:admin', () => {
       socket.leave('admin');
+      if (socketAdminRole) socket.leave(`admin-role:${socketAdminRole}`);
+      socketAdminRole = null;
     });
   });
 

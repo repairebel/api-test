@@ -10,6 +10,7 @@ import errorHandlerPlugin from './plugins/error-handler.plugin.js';
 import rateLimitPlugin from './plugins/rate-limit.plugin.js';
 import idempotencyPlugin from './plugins/idempotency.plugin.js';
 import authPlugin from './plugins/auth.plugin.js';
+import telemetryPlugin from './plugins/telemetry.plugin.js';
 
 // Routes
 import authRoutes from './modules/auth/auth.routes.js';
@@ -69,6 +70,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(rateLimitPlugin);
   await app.register(idempotencyPlugin);
   await app.register(authPlugin);
+  await app.register(telemetryPlugin);
 
   // ── Health check ──
   app.get('/health', async () => ({
