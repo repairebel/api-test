@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { eq, and, desc, sql, exists } from 'drizzle-orm';
 import { db } from '../../db/client.js';
 import {
@@ -569,7 +570,10 @@ export async function subscribeToPlan(customerId: string, input: SubscribeInput)
         }
       }
 
-      const subscription = await stripe.subscriptions.create(subscriptionParams);
+      const authAttemptId = randomUUID();
+      const subscription = await stripe.subscriptions.create(subscriptionParams, {
+        idempotencyKey: `protection-sub-${plan.id}-${customerId}-${authAttemptId}`,
+      });
 
       console.log('🛡️ Protection monthly subscription created:', {
         subscriptionId: subscription.id,
@@ -690,6 +694,8 @@ export async function subscribeToPlan(customerId: string, input: SubscribeInput)
           }
         : {};
 
+      const authAttemptId = randomUUID();
+
       // Try off-session first (no 3DS challenge)
       try {
         const paymentIntent = await stripe.paymentIntents.create({
@@ -702,7 +708,7 @@ export async function subscribeToPlan(customerId: string, input: SubscribeInput)
           automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
           metadata: piMetadata,
           ...splitFields,
-        });
+        }, { idempotencyKey: `protection-onetime-${plan.id}-${customerId}-${authAttemptId}` });
         stripePaymentIntentId = paymentIntent.id;
       } catch (piErr: any) {
         if (piErr.code === 'authentication_required') {
@@ -716,7 +722,7 @@ export async function subscribeToPlan(customerId: string, input: SubscribeInput)
             automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
             metadata: piMetadata,
             ...splitFields,
-          });
+          }, { idempotencyKey: `protection-3ds-${plan.id}-${customerId}-${authAttemptId}` });
           stripePaymentIntentId = onSessionPi.id;
           clientSecret = onSessionPi.client_secret;
           requiresAction = onSessionPi.status === 'requires_action';
@@ -740,6 +746,10 @@ export async function subscribeToPlan(customerId: string, input: SubscribeInput)
       userMessage = 'Incorrect CVC. Please check your card details.';
     } else if (stripeCode === 'processing_error') {
       userMessage = 'Payment processing error. Please try again in a moment.';
+    } else if (err.type === 'idempotency_error') {
+      userMessage = 'A payment request conflict occurred. Please try again in a moment.';
+    } else if (err.type === 'card_error' && err.message) {
+      userMessage = err.message;
     }
     console.error('Stripe protection payment failed:', err.message);
     throw new AppError(402, ErrorCode.VALIDATION_ERROR, userMessage);

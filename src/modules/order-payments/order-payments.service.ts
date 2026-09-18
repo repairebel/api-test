@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import Stripe from 'stripe';
 import { db } from '../../db/client.js';
@@ -37,6 +38,7 @@ function stripeMessage(error: any) {
   if (code === 'expired_card') return 'Your saved card has expired. Please use a different card.';
   if (code === 'incorrect_cvc') return 'The saved card could not be verified. Please update it and try again.';
   if (code === 'card_declined') return 'Your card was declined. Please use a different card.';
+  if (error?.type === 'idempotency_error') return 'A payment request conflict occurred. Please try again in a moment.';
   return error?.message || 'The payment could not be authorized. Please try again.';
 }
 
@@ -153,7 +155,16 @@ export async function approveAdjustment(adjustmentId: string, customerId: string
   if (adjustment.status !== 'REQUESTED') throw new AppError(400, ErrorCode.VALIDATION_ERROR, `This adjustment is ${adjustment.status.toLowerCase()}.`);
 
   if (adjustment.stripePaymentIntentId) {
-    return finalizeAuthorizedAdjustment(adjustmentId, customerId, adjustment.stripePaymentIntentId);
+    if (!env.STRIPE_SECRET_KEY || adjustment.stripePaymentIntentId.startsWith('pi_mock_')) {
+      return finalizeAuthorizedAdjustment(adjustmentId, customerId, adjustment.stripePaymentIntentId);
+    }
+    const stripe = new Stripe(env.STRIPE_SECRET_KEY);
+    const existingPi = await stripe.paymentIntents.retrieve(adjustment.stripePaymentIntentId).catch(() => null);
+    if (existingPi && (existingPi.status === 'requires_capture' || existingPi.status === 'requires_action' || existingPi.status === 'succeeded')) {
+      return finalizeAuthorizedAdjustment(adjustmentId, customerId, adjustment.stripePaymentIntentId);
+    }
+    // If the previous PaymentIntent was canceled, failed, or requires a new payment method,
+    // continue below to create a fresh PaymentIntent with the customer's current card.
   }
 
   if (!env.STRIPE_SECRET_KEY) return finalizeAuthorizedAdjustment(adjustmentId, customerId, `pi_mock_adjustment_${adjustmentId}`);
@@ -162,11 +173,12 @@ export async function approveAdjustment(adjustmentId: string, customerId: string
   const metadata = { type: 'order_adjustment', adjustmentId, jobId: adjustment.jobId, shopId: adjustment.shopId, customerId };
   try {
     let pi: Stripe.PaymentIntent;
+    const authAttemptId = randomUUID();
     try {
-      pi = await stripe.paymentIntents.create({ amount: adjustment.adjustmentCents, currency: 'usd', capture_method: 'manual', customer: stripeCustomerId, payment_method: paymentMethodId, off_session: true, confirm: true, automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata }, { idempotencyKey: `adjustment-${adjustmentId}-authorization` });
+      pi = await stripe.paymentIntents.create({ amount: adjustment.adjustmentCents, currency: 'usd', capture_method: 'manual', customer: stripeCustomerId, payment_method: paymentMethodId, off_session: true, confirm: true, automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata }, { idempotencyKey: `adjustment-auth-${adjustmentId}-${authAttemptId}` });
     } catch (error: any) {
       if (error.code !== 'authentication_required') throw error;
-      pi = await stripe.paymentIntents.create({ amount: adjustment.adjustmentCents, currency: 'usd', capture_method: 'manual', customer: stripeCustomerId, payment_method: paymentMethodId, confirm: true, automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata }, { idempotencyKey: `adjustment-${adjustmentId}-authentication` });
+      pi = await stripe.paymentIntents.create({ amount: adjustment.adjustmentCents, currency: 'usd', capture_method: 'manual', customer: stripeCustomerId, payment_method: paymentMethodId, confirm: true, automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata }, { idempotencyKey: `adjustment-3ds-${adjustmentId}-${authAttemptId}` });
     }
     await db.update(orderAdjustments).set({ stripePaymentIntentId: pi.id, updatedAt: new Date() }).where(eq(orderAdjustments.id, adjustmentId));
     if (pi.status === 'requires_action') return { requiresAction: true, adjustmentId, stripePaymentIntentId: pi.id, paymentClientSecret: pi.client_secret, publishableKey: env.STRIPE_PUBLISHABLE_KEY ?? '' };
@@ -239,14 +251,14 @@ export async function createTip(jobId: string, customerId: string, amountCents: 
   const stripe = new Stripe(env.STRIPE_SECRET_KEY);
   const { stripeCustomerId, paymentMethodId } = await savedPaymentMethod(stripe, customerId);
   const metadata = { type: 'tip', tipId: tip.id, jobId, shopId: job.shopId, customerId, platformFeeCents: '0' };
-  const attemptKey = tip.updatedAt.getTime();
+  const authAttemptId = randomUUID();
   try {
     let pi: Stripe.PaymentIntent;
     try {
-      pi = await stripe.paymentIntents.create({ amount: amountCents, currency: 'usd', customer: stripeCustomerId, payment_method: paymentMethodId, off_session: true, confirm: true, automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata }, { idempotencyKey: `tip-${tip.id}-payment-${attemptKey}` });
+      pi = await stripe.paymentIntents.create({ amount: amountCents, currency: 'usd', customer: stripeCustomerId, payment_method: paymentMethodId, off_session: true, confirm: true, automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata }, { idempotencyKey: `tip-pay-${tip.id}-${authAttemptId}` });
     } catch (error: any) {
       if (error.code !== 'authentication_required') throw error;
-      pi = await stripe.paymentIntents.create({ amount: amountCents, currency: 'usd', customer: stripeCustomerId, payment_method: paymentMethodId, confirm: true, automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata }, { idempotencyKey: `tip-${tip.id}-authentication-${attemptKey}` });
+      pi = await stripe.paymentIntents.create({ amount: amountCents, currency: 'usd', customer: stripeCustomerId, payment_method: paymentMethodId, confirm: true, automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata }, { idempotencyKey: `tip-3ds-${tip.id}-${authAttemptId}` });
     }
     await db.update(orderTips).set({ stripePaymentIntentId: pi.id, updatedAt: new Date() }).where(eq(orderTips.id, tip.id));
     if (pi.status === 'requires_action') return { requiresAction: true, tipId: tip.id, stripePaymentIntentId: pi.id, paymentClientSecret: pi.client_secret, publishableKey: env.STRIPE_PUBLISHABLE_KEY ?? '' };

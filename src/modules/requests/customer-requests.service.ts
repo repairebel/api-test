@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { eq, and, ne, not, ilike, sql, inArray, desc } from 'drizzle-orm';
 import { db } from '../../db/client.js';
 import {
@@ -510,11 +511,12 @@ export async function acceptOffer(offerId: string, customerId: string) {
   let customerFullName: string | null = null;
 
   const result = await db.transaction(async (tx) => {
-    // 1. Get the offer
+    // 1. Get the offer (lock row to serialize concurrent accept requests)
     const [offer] = await tx
       .select()
       .from(offers)
       .where(eq(offers.id, offerId))
+      .for('update')
       .limit(1);
 
     if (!offer) throw new AppError(404, ErrorCode.NOT_FOUND, 'Offer not found');
@@ -522,11 +524,12 @@ export async function acceptOffer(offerId: string, customerId: string) {
       throw new AppError(400, ErrorCode.VALIDATION_ERROR, `Offer is already ${offer.status}`);
     }
 
-    // 2. Get the request & verify ownership
+    // 2. Get the request & verify ownership (lock row to prevent competing acceptances)
     const [request] = await tx
       .select()
       .from(requests)
       .where(eq(requests.id, offer.requestId))
+      .for('update')
       .limit(1);
 
     if (!request) throw new AppError(404, ErrorCode.NOT_FOUND, 'Request not found');
@@ -603,6 +606,8 @@ export async function acceptOffer(offerId: string, customerId: string) {
           customerName: request.customerName,
         };
 
+        const authAttemptId = randomUUID();
+
         // Try off-session first (no 3DS challenge needed)
         try {
           const paymentIntent = await stripe.paymentIntents.create({
@@ -615,7 +620,7 @@ export async function acceptOffer(offerId: string, customerId: string) {
             confirm: true,
             automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
             metadata: piMetadata,
-          }, { idempotencyKey: `offer-${offer.id}-authorization` });
+          }, { idempotencyKey: `offer-auth-${offer.id}-${authAttemptId}` });
           stripePaymentIntentId = paymentIntent.id;
         } catch (piErr: any) {
           if (piErr.code === 'authentication_required') {
@@ -629,7 +634,7 @@ export async function acceptOffer(offerId: string, customerId: string) {
               confirm: true,
               automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
               metadata: piMetadata,
-            }, { idempotencyKey: `offer-${offer.id}-authentication` });
+            }, { idempotencyKey: `offer-3ds-${offer.id}-${authAttemptId}` });
             stripePaymentIntentId = onSessionPi.id;
             paymentClientSecret = onSessionPi.client_secret;
             requiresAction = onSessionPi.status === 'requires_action';
@@ -655,6 +660,10 @@ export async function acceptOffer(offerId: string, customerId: string) {
           userMessage = 'Incorrect CVC. Please check your card details.';
         } else if (stripeCode === 'processing_error') {
           userMessage = 'Payment processing error. Please try again in a moment.';
+        } else if (err.type === 'idempotency_error') {
+          userMessage = 'A payment request conflict occurred. Please try again in a moment.';
+        } else if (err.type === 'card_error' && err.message) {
+          userMessage = err.message;
         }
 
         console.error('Stripe PaymentIntent creation failed:', err.message);
@@ -1661,6 +1670,10 @@ export async function updateJobPaymentMethod(jobId: string, customerId: string) 
         userMessage = 'Insufficient funds. Please use a different card.';
       } else if (stripeCode === 'expired_card') {
         userMessage = 'Your card has expired. Please use a different card.';
+      } else if (err.type === 'idempotency_error') {
+        userMessage = 'A payment request conflict occurred. Please try again in a moment.';
+      } else if (err.type === 'card_error' && err.message) {
+        userMessage = err.message;
       }
       throw new AppError(402, ErrorCode.VALIDATION_ERROR, userMessage);
     }
