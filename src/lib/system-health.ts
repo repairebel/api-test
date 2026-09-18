@@ -6,7 +6,6 @@ import { redis } from './redis.js';
 import { dispatchTimeoutQueue, offerExpiryQueue, payoutReleaseQueue } from './queue.js';
 import { getHttpTelemetry } from './http-telemetry.js';
 import { getIO } from './socket.js';
-import { notifyAdmin } from './notify.js';
 
 export type HealthStatus = 'operational' | 'degraded' | 'outage' | 'not_configured';
 
@@ -332,24 +331,6 @@ async function addIncident(report: SystemHealthReport, previousState: string) {
     await redis.multi().lpush(INCIDENT_KEY, JSON.stringify(incident)).ltrim(INCIDENT_KEY, 0, 24).expire(INCIDENT_KEY, 60 * 60 * 24 * 30).exec();
   } catch { /* Keep the in-memory copy while Redis is unavailable. */ }
 
-  // Do not create a recovery notification when a new instance starts healthy.
-  if (!previousState && recovered) return;
-  try {
-    const incidentPayload: Record<string, unknown> = {
-      id: incident.id,
-      timestamp: incident.timestamp,
-      status: incident.status,
-      title: incident.title,
-      message: incident.message,
-      affectedComponents: incident.affectedComponents,
-    };
-    await notifyAdmin({
-      adminRoles: ['super_admin'], event: 'system:health-alert', payload: incidentPayload,
-      persist: { category: 'system', title: incident.title, body: incident.message, data: incidentPayload },
-    });
-  } catch (error) {
-    console.error('Failed to deliver system health alert:', safeErrorMessage(error, 'notification delivery failed'));
-  }
 }
 
 async function monitorOnce() {

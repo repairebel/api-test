@@ -1,6 +1,6 @@
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import { orderTips, shops } from '../../db/schema/index.js';
+import { payouts, shops } from '../../db/schema/index.js';
 import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 
 function resolveRange(range = '30d', from?: string, to?: string) {
@@ -23,36 +23,36 @@ function resolveRange(range = '30d', from?: string, to?: string) {
 export async function getAdminTipReport(input: { range?: string; from?: string; to?: string }) {
   const selected = resolveRange(input.range, input.from, input.to);
   const where = and(
-    eq(orderTips.status, 'COMPLETED'),
-    gte(orderTips.completedAt, selected.start),
-    lte(orderTips.completedAt, selected.end),
+    eq(payouts.status, 'COMPLETED'),
+    eq(payouts.payoutMethod, 'tip'),
+    sql`COALESCE(${payouts.completedAt}, ${payouts.createdAt}) >= ${selected.start}`,
+    sql`COALESCE(${payouts.completedAt}, ${payouts.createdAt}) <= ${selected.end}`,
   );
 
   const [[summary], byStore, recent] = await Promise.all([
     db.select({
-      totalCents: sql<number>`COALESCE(SUM(${orderTips.amountCents}), 0)::int`,
+      totalCents: sql<number>`COALESCE(SUM(${payouts.amountCents}), 0)::int`,
       tipCount: sql<number>`COUNT(*)::int`,
-      averageCents: sql<number>`COALESCE(AVG(${orderTips.amountCents}), 0)::int`,
-      storesTipped: sql<number>`COUNT(DISTINCT ${orderTips.shopId})::int`,
-    }).from(orderTips).where(where),
+      averageCents: sql<number>`COALESCE(AVG(${payouts.amountCents}), 0)::int`,
+      storesTipped: sql<number>`COUNT(DISTINCT ${payouts.shopId})::int`,
+    }).from(payouts).where(where),
     db.select({
-      shopId: orderTips.shopId,
+      shopId: payouts.shopId,
       shopName: shops.name,
-      totalCents: sql<number>`COALESCE(SUM(${orderTips.amountCents}), 0)::int`,
+      totalCents: sql<number>`COALESCE(SUM(${payouts.amountCents}), 0)::int`,
       tipCount: sql<number>`COUNT(*)::int`,
-      averageCents: sql<number>`COALESCE(AVG(${orderTips.amountCents}), 0)::int`,
-      lastTipAt: sql<Date>`MAX(${orderTips.completedAt})`,
-    }).from(orderTips).innerJoin(shops, eq(shops.id, orderTips.shopId)).where(where)
-      .groupBy(orderTips.shopId, shops.name).orderBy(desc(sql`SUM(${orderTips.amountCents})`)),
+      averageCents: sql<number>`COALESCE(AVG(${payouts.amountCents}), 0)::int`,
+      lastTipAt: sql<Date>`MAX(COALESCE(${payouts.completedAt}, ${payouts.createdAt}))`,
+    }).from(payouts).innerJoin(shops, eq(shops.id, payouts.shopId)).where(where)
+      .groupBy(payouts.shopId, shops.name).orderBy(desc(sql`SUM(${payouts.amountCents})`)),
     db.select({
-      id: orderTips.id,
-      shopId: orderTips.shopId,
+      id: payouts.id,
+      shopId: payouts.shopId,
       shopName: shops.name,
-      jobId: orderTips.jobId,
-      amountCents: orderTips.amountCents,
-      completedAt: orderTips.completedAt,
-    }).from(orderTips).innerJoin(shops, eq(shops.id, orderTips.shopId)).where(where)
-      .orderBy(desc(orderTips.completedAt)).limit(50),
+      amountCents: payouts.amountCents,
+      completedAt: payouts.completedAt,
+    }).from(payouts).innerJoin(shops, eq(shops.id, payouts.shopId)).where(where)
+      .orderBy(desc(payouts.completedAt)).limit(50),
   ]);
 
   const bucket = selected.interval === 'day'
@@ -64,10 +64,11 @@ export async function getAdminTipReport(input: { range?: string; from?: string; 
     SELECT ${bucket} AS period,
       COALESCE(SUM(amount_cents), 0)::int AS total_cents,
       COUNT(*)::int AS tip_count
-    FROM order_tips
+    FROM payouts
     WHERE status = 'COMPLETED'
-      AND completed_at >= ${selected.start}
-      AND completed_at <= ${selected.end}
+      AND payout_method = 'tip'
+      AND COALESCE(completed_at, created_at) >= ${selected.start}
+      AND COALESCE(completed_at, created_at) <= ${selected.end}
     GROUP BY ${bucket}
     ORDER BY period ASC
   `);

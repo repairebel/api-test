@@ -1,6 +1,6 @@
 import { db } from '../../db/client.js';
 import { pushTokens, notifications } from '../../db/schema/index.js';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, not } from 'drizzle-orm';
 
 // ─── Push token management ─────────────────────────────────
 
@@ -66,7 +66,10 @@ export async function getUserNotifications(
   const limit = Math.min(opts.limit ?? 30, 100);
   const offset = (page - 1) * limit;
 
-  let where = eq(notifications.userId, userId);
+  let where = and(
+    eq(notifications.userId, userId),
+    not(and(eq(notifications.targetType, 'ADMIN'), eq(notifications.category, 'system'))!),
+  )!;
 
   if (opts.category) {
     where = and(where, eq(notifications.category, opts.category as any))!;
@@ -90,7 +93,11 @@ export async function getUnreadCount(userId: string): Promise<number> {
   const [result] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(notifications)
-    .where(and(eq(notifications.userId, userId), eq(notifications.read, false)));
+    .where(and(
+      eq(notifications.userId, userId),
+      eq(notifications.read, false),
+      not(and(eq(notifications.targetType, 'ADMIN'), eq(notifications.category, 'system'))!),
+    ));
   return result?.count ?? 0;
 }
 
