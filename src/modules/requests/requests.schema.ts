@@ -21,7 +21,7 @@ export const dispatchIdParamsSchema = z.object({
 // ── Offer body schema ──
 
 export const createOfferBodySchema = z.object({
-  priceCents: z.number().int().positive(),
+  priceCents: z.number().int().min(100, 'Offer price must be at least $1.00'),
   etaMinutes: z.number().int().positive(),
   warrantyDays: z.number().int().min(0).default(0),
   partsQuality: z.enum(['AFTERMARKET', 'PREMIUM', 'ORIGINAL']).default('AFTERMARKET'),

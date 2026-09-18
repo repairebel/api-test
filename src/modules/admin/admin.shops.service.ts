@@ -69,6 +69,8 @@ export async function listShops(query: ListShopsQuery) {
         stripeConnected: shops.stripeConnected,
         priorityEnabled: shops.priorityEnabled,
         priorityLevel: shops.priorityLevel,
+        customCommissionPercent: shops.customCommissionPercent,
+        customInsurancePercent: shops.customInsurancePercent,
         createdAt: shops.createdAt,
       })
       .from(shops)
@@ -226,11 +228,16 @@ export async function updateShop(
     state?: string;
     zipCode?: string;
     country?: string;
+    latitude?: string;
+    longitude?: string;
+    placeId?: string;
     categories?: string[];
     serviceRadius?: number;
     vacationMode?: boolean;
     priorityEnabled?: boolean;
     priorityLevel?: number | null;
+    customCommissionPercent?: number | null;
+    customInsurancePercent?: number | null;
   },
 ) {
   const [shop] = await db.select({ id: shops.id }).from(shops).where(eq(shops.id, shopId)).limit(1);
@@ -246,11 +253,24 @@ export async function updateShop(
   if (data.state !== undefined) set.state = data.state;
   if (data.zipCode !== undefined) set.zipCode = data.zipCode;
   if (data.country !== undefined) set.country = data.country;
+  if (data.latitude !== undefined) set.latitude = data.latitude;
+  if (data.longitude !== undefined) set.longitude = data.longitude;
+  if (data.placeId !== undefined) set.placeId = data.placeId;
   if (data.categories !== undefined) set.categories = data.categories;
   if (data.serviceRadius !== undefined) set.serviceRadius = data.serviceRadius;
   if (data.vacationMode !== undefined) set.vacationMode = data.vacationMode;
   if (data.priorityEnabled !== undefined) set.priorityEnabled = data.priorityEnabled;
   if (data.priorityLevel !== undefined) set.priorityLevel = data.priorityLevel;
+  for (const [key, value] of [
+    ['customCommissionPercent', data.customCommissionPercent],
+    ['customInsurancePercent', data.customInsurancePercent],
+  ] as const) {
+    if (value === undefined) continue;
+    if (value !== null && (!Number.isFinite(value) || value < 0 || value > 100)) {
+      throw new AppError(400, ErrorCode.VALIDATION_ERROR, `${key} must be between 0 and 100, or null to use the default`);
+    }
+    set[key] = value;
+  }
 
   await db.update(shops).set(set).where(eq(shops.id, shopId));
 

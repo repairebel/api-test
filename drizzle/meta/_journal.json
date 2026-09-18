@@ -71,6 +71,13 @@
       "when": 1789593367671,
       "tag": "0009_striped_lilith",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789693200000,
+      "tag": "0010_shop_fee_overrides",
+      "breakpoints": true
     }
   ]
 }

@@ -5,7 +5,6 @@ import {
   requests,
   users,
   shops,
-  systemSettings,
   inventoryItems,
   inventoryMovements,
   offers,
@@ -31,8 +30,7 @@ import { sendOrderBookingConfirmationEmail } from '../../lib/email.js';
 import { ensureStripeCustomerForUser } from '../../lib/stripe-customers.js';
 import { env } from '../../config/env.js';
 import { getJobTip, getLatestAdjustment, serializeAdjustment, serializeTip } from '../order-payments/order-payments.service.js';
-
-const SETTINGS_ID = '00000000-0000-0000-0000-000000000001';
+import { getShopFeeRates } from '../../lib/shop-fees.js';
 
 async function releaseReservedOffers(
   tx: any,
@@ -124,17 +122,6 @@ async function expireCompetingMarketplaceState(
     );
 
   return expiredDispatches;
-}
-
-async function getOrderCommissionPercent(): Promise<number> {
-  const [settings] = await db
-    .select({ commissionPercent: systemSettings.commissionPercent })
-    .from(systemSettings)
-    .where(eq(systemSettings.id, SETTINGS_ID))
-    .limit(1);
-
-  const percent = settings?.commissionPercent ?? 5;
-  return Math.max(0, Math.min(100, percent));
 }
 
 // ─── Device Model Search ───
@@ -565,7 +552,7 @@ export async function acceptOffer(offerId: string, customerId: string) {
     }
 
     // 4. Calculate platform fee from admin settings
-    const commissionPercent = await getOrderCommissionPercent();
+    const { commissionPercent } = await getShopFeeRates(offer.shopId);
     platformFeeCents = Math.round(offer.priceCents * (commissionPercent / 100));
 
     // 4b. Get customer's Stripe customer ID and default payment method
@@ -983,7 +970,7 @@ export async function confirmOfferPayment(
     customerFullName = customerUser?.fullName ?? null;
 
     // Calculate platform fee
-    const commissionPercent = await getOrderCommissionPercent();
+    const { commissionPercent } = await getShopFeeRates(offer.shopId);
     const platformFeeCents = Math.round(offer.priceCents * (commissionPercent / 100));
 
     // Accept the offer
@@ -1451,7 +1438,7 @@ export async function confirmCustomerJob(
   const platformFeeCents =
     typeof job.platformFeeCents === 'number'
       ? job.platformFeeCents
-      : Math.round(job.priceCents * ((await getOrderCommissionPercent()) / 100));
+      : Math.round(job.priceCents * ((await getShopFeeRates(job.shopId)).commissionPercent / 100));
   const netAmountCents = job.priceCents - platformFeeCents;
 
   const capturedAdjustments = await db

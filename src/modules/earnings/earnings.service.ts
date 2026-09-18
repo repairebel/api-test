@@ -1,6 +1,6 @@
-import { eq, and, isNull, sql, gte, desc } from 'drizzle-orm';
+import { eq, and, sql, gte, desc } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import { jobs, jobStatusEvents, payouts, shops, systemSettings } from '../../db/schema/index.js';
+import { jobs, jobStatusEvents, orderTips, payouts, shops, systemSettings } from '../../db/schema/index.js';
 import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 import { getIO } from '../../lib/socket.js';
 import { notifyShop } from '../../lib/notify.js';
@@ -279,17 +279,44 @@ export async function customerConfirmJob(jobId: string, customerId: string) {
 
 // ─── Earnings summary ───
 
-export async function getEarningsSummary(shopId: string, range: string) {
+function parseDateBoundary(value: string, endOfDay = false) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function resolveEarningsRange(range: string, from?: string, to?: string) {
+  const end = range === 'custom' && to ? parseDateBoundary(to, true) : new Date();
+  const start = range === 'custom' && from ? parseDateBoundary(from) : new Date();
+  if (!start || !end) {
+    throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Custom dates must use YYYY-MM-DD');
+  }
+
+  if (range !== 'custom') {
+    const days = range === '7d' ? 7 : range === '90d' ? 90 : range === '1y' ? 365 : 30;
+    start.setDate(start.getDate() - days);
+  }
+
+  const durationDays = Math.ceil((end.getTime() - start.getTime()) / 86_400_000);
+  if (durationDays < 0) {
+    throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'The start date must be before the end date');
+  }
+  if (durationDays > 366) {
+    throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Earnings reports are limited to one year');
+  }
+
+  return {
+    start,
+    end,
+    interval: durationDays <= 31 ? 'day' : durationDays <= 180 ? 'week' : 'month',
+  } as const;
+}
+
+export async function getEarningsSummary(shopId: string, range: string, from?: string, to?: string) {
   const cashoutSettings = await getInstantCashoutSettings();
-
-  // Determine date cutoff from range
-  let days = 30;
-  if (range === '7d') days = 7;
-  else if (range === '30d') days = 30;
-  else if (range === '90d') days = 90;
-
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - days);
+  const selectedRange = resolveEarningsRange(range, from, to);
+  const cutoff = selectedRange.start;
+  const rangeEnd = selectedRange.end;
 
   // Held: sum of price_cents where payment is captured from customer but not yet released
   // This includes ALL job statuses (BOOKED, IN_PROGRESS, COMPLETED, etc.) with HELD or CAPTURED payment
@@ -301,45 +328,30 @@ export async function getEarningsSummary(shopId: string, range: string) {
       sql`${jobs.paymentStatus} IN ('HELD', 'CAPTURED')`,
     ));
 
-  // Available (released): sum within range
+  // Released store earnings in range. Instant cashouts move existing funds and
+  // are excluded so they never count as earnings a second time.
   const [releasedRow] = await db
-    .select({ total: sql<number>`COALESCE(SUM(price_cents), 0)::int` })
-    .from(jobs)
-    .where(
-      and(
-        eq(jobs.shopId, shopId),
-        eq(jobs.paymentStatus, 'RELEASED'),
-        gte(jobs.completedAt, cutoff),
-      ),
-    );
-
-  // Protection subscription earnings in range (recorded in payouts with null jobId)
-  const [releasedProtectionRow] = await db
     .select({ total: sql<number>`COALESCE(SUM(${payouts.netAmountCents}), 0)::int` })
     .from(payouts)
     .where(
       and(
         eq(payouts.shopId, shopId),
-        isNull(payouts.jobId),
         eq(payouts.status, 'COMPLETED'),
-        gte(payouts.createdAt, cutoff),
+        sql`${payouts.payoutMethod} IS DISTINCT FROM 'instant'`,
+        sql`COALESCE(${payouts.completedAt}, ${payouts.createdAt}) >= ${cutoff}`,
+        sql`COALESCE(${payouts.completedAt}, ${payouts.createdAt}) <= ${rangeEnd}`,
       ),
     );
 
   // Total released all time
   const [releasedAllRow] = await db
-    .select({ total: sql<number>`COALESCE(SUM(price_cents), 0)::int` })
-    .from(jobs)
-    .where(and(eq(jobs.shopId, shopId), eq(jobs.paymentStatus, 'RELEASED')));
-
-  const [releasedProtectionAllRow] = await db
     .select({ total: sql<number>`COALESCE(SUM(${payouts.netAmountCents}), 0)::int` })
     .from(payouts)
     .where(
       and(
         eq(payouts.shopId, shopId),
-        isNull(payouts.jobId),
         eq(payouts.status, 'COMPLETED'),
+        sql`${payouts.payoutMethod} IS DISTINCT FROM 'instant'`,
       ),
     );
 
@@ -352,6 +364,7 @@ export async function getEarningsSummary(shopId: string, range: string) {
         eq(jobs.shopId, shopId),
         eq(jobs.status, 'COMPLETED'),
         gte(jobs.completedAt, cutoff),
+        sql`${jobs.completedAt} <= ${rangeEnd}`,
       ),
     );
 
@@ -364,40 +377,59 @@ export async function getEarningsSummary(shopId: string, range: string) {
         eq(jobs.shopId, shopId),
         eq(jobs.status, 'COMPLETED'),
         gte(jobs.completedAt, cutoff),
+        sql`${jobs.completedAt} <= ${rangeEnd}`,
       ),
     );
 
-  // Chart points: daily earnings for the range
+  const bucketExpression = selectedRange.interval === 'day'
+    ? sql`DATE(COALESCE(completed_at, created_at))`
+    : selectedRange.interval === 'week'
+      ? sql`DATE_TRUNC('week', COALESCE(completed_at, created_at))::date`
+      : sql`DATE_TRUNC('month', COALESCE(completed_at, created_at))::date`;
+
+  // Graph actual net earnings, including tips and protection income.
   const chartRows = await db.execute(sql`
     SELECT
-      DATE(completed_at) AS day,
-      COALESCE(SUM(price_cents), 0)::int AS total_cents,
-      COUNT(*)::int AS job_count
-    FROM jobs
+      ${bucketExpression} AS day,
+      COALESCE(SUM(net_amount_cents), 0)::int AS total_cents,
+      COALESCE(SUM(net_amount_cents) FILTER (WHERE payout_method = 'tip'), 0)::int AS tips_cents,
+      COUNT(*) FILTER (WHERE job_id IS NOT NULL)::int AS job_count
+    FROM payouts
     WHERE shop_id = ${shopId}
       AND status = 'COMPLETED'
-      AND payment_status = 'RELEASED'
-      AND completed_at >= ${cutoff}
-    GROUP BY DATE(completed_at)
+      AND payout_method IS DISTINCT FROM 'instant'
+      AND COALESCE(completed_at, created_at) >= ${cutoff}
+      AND COALESCE(completed_at, created_at) <= ${rangeEnd}
+    GROUP BY ${bucketExpression}
     ORDER BY day ASC
   `);
 
-  // Total platform fees paid
+  // Fees and tips for the selected reporting period.
   const [platformFeeRow] = await db
-    .select({ total: sql<number>`COALESCE(SUM(platform_fee_cents), 0)::int` })
-    .from(jobs)
-    .where(and(eq(jobs.shopId, shopId), eq(jobs.paymentStatus, 'RELEASED')));
-
-  const [platformFeeProtectionRow] = await db
     .select({ total: sql<number>`COALESCE(SUM(${payouts.platformFeeCents}), 0)::int` })
     .from(payouts)
     .where(
       and(
         eq(payouts.shopId, shopId),
-        isNull(payouts.jobId),
         eq(payouts.status, 'COMPLETED'),
+        sql`${payouts.payoutMethod} IS DISTINCT FROM 'instant'`,
+        sql`COALESCE(${payouts.completedAt}, ${payouts.createdAt}) >= ${cutoff}`,
+        sql`COALESCE(${payouts.completedAt}, ${payouts.createdAt}) <= ${rangeEnd}`,
       ),
     );
+
+  const [tipRow] = await db
+    .select({
+      total: sql<number>`COALESCE(SUM(${orderTips.amountCents}), 0)::int`,
+      count: sql<number>`COUNT(*)::int`,
+    })
+    .from(orderTips)
+    .where(and(
+      eq(orderTips.shopId, shopId),
+      eq(orderTips.status, 'COMPLETED'),
+      gte(orderTips.completedAt, cutoff),
+      sql`${orderTips.completedAt} <= ${rangeEnd}`,
+    ));
 
   // Get Stripe Connect balance
   // Since we use source_transaction on transfers, funds are INSTANTLY available
@@ -448,17 +480,13 @@ export async function getEarningsSummary(shopId: string, range: string) {
     console.error('Failed to fetch Stripe balance:', err.message);
   }
 
-  const releasedJobsRange = releasedRow.total;
-  const releasedProtectionRange = releasedProtectionRow.total;
-  const releasedJobsAll = releasedAllRow.total;
-  const releasedProtectionAll = releasedProtectionAllRow.total;
-  const totalPlatformFees = (platformFeeRow.total ?? 0) + (platformFeeProtectionRow.total ?? 0);
-
   return {
     heldCents: heldRow.total,
-    availableCents: releasedJobsAll + releasedProtectionAll,
-    releasedCents: releasedJobsRange + releasedProtectionRange,
-    platformFeeCents: totalPlatformFees,
+    availableCents: releasedAllRow.total,
+    releasedCents: releasedRow.total,
+    platformFeeCents: platformFeeRow.total,
+    tipCents: tipRow.total,
+    tipCount: tipRow.count,
     jobsCompletedCount: jobsCountRow.count,
     avgJobValueCents: avgRow.avg,
     stripeAvailableCents,
@@ -469,9 +497,13 @@ export async function getEarningsSummary(shopId: string, range: string) {
     payoutsFrozenSource,
     payoutsFrozenReason,
     defaultPayoutSchedule,
+    rangeStart: cutoff.toISOString(),
+    rangeEnd: rangeEnd.toISOString(),
+    chartInterval: selectedRange.interval,
     chartPoints: (chartRows.rows as any[]).map((r: any) => ({
       day: r.day,
       totalCents: r.total_cents,
+      tipsCents: r.tips_cents,
       jobCount: r.job_count,
     })),
   };

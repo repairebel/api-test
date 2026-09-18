@@ -7,24 +7,13 @@ import {
   orderTips,
   payouts,
   shops,
-  systemSettings,
 } from '../../db/schema/index.js';
 import { env } from '../../config/env.js';
 import { ensureStripeCustomerForUser } from '../../lib/stripe-customers.js';
 import { notifyCustomer, notifyShop } from '../../lib/notify.js';
 import { getIO } from '../../lib/socket.js';
 import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
-
-const SETTINGS_ID = '00000000-0000-0000-0000-000000000001';
-
-async function commissionPercent() {
-  const [settings] = await db
-    .select({ value: systemSettings.commissionPercent })
-    .from(systemSettings)
-    .where(eq(systemSettings.id, SETTINGS_ID))
-    .limit(1);
-  return settings?.value ?? 15;
-}
+import { getShopFeeRates } from '../../lib/shop-fees.js';
 
 async function savedPaymentMethod(stripe: Stripe, customerId: string) {
   const stripeCustomerId = await ensureStripeCustomerForUser(stripe, customerId);
@@ -137,7 +126,7 @@ async function finalizeAuthorizedAdjustment(adjustmentId: string, customerId: st
     }
   }
 
-  const feePercent = await commissionPercent();
+  const feePercent = (await getShopFeeRates(adjustment.shopId)).commissionPercent;
   const [updated] = await db.transaction(async (tx) => {
     const rows = await tx.update(orderAdjustments).set({ status: 'AUTHORIZED', stripePaymentIntentId, respondedAt: new Date(), updatedAt: new Date(), paymentError: null }).where(and(eq(orderAdjustments.id, adjustmentId), eq(orderAdjustments.status, 'REQUESTED'))).returning();
     if (!rows[0]) return [];

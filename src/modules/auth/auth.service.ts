@@ -404,6 +404,62 @@ export async function refresh(rawRefreshToken: string) {
     });
   }
 
+  if (account?.type === 'SHOP_OWNER') {
+    return db.transaction(async tx => {
+      // Serialize refresh with account/session changes and keep the device token
+      // stable. The store app can issue several requests when it resumes; rotating
+      // the refresh token during that burst can make a valid device log itself out.
+      const [shopOwner] = await tx
+        .select({
+          id: users.id,
+          userType: users.userType,
+          status: users.status,
+          sessionVersion: users.sessionVersion,
+        })
+        .from(users)
+        .where(eq(users.id, storedToken.userId))
+        .for('update');
+      const [token] = await tx
+        .select({
+          revokedAt: refreshTokens.revokedAt,
+          expiresAt: refreshTokens.expiresAt,
+        })
+        .from(refreshTokens)
+        .where(eq(refreshTokens.id, storedToken.id));
+
+      if (!shopOwner || !token || token.revokedAt || token.expiresAt < new Date()) {
+        throw new AppError(401, ErrorCode.UNAUTHORIZED, 'This session has ended');
+      }
+      if (shopOwner.status === 'SUSPENDED') {
+        throw new AppError(403, ErrorCode.FORBIDDEN, suspendedMessage);
+      }
+
+      const [membership] = await tx
+        .select({
+          role: memberships.role,
+          shopId: memberships.shopId,
+        })
+        .from(memberships)
+        .where(eq(memberships.userId, storedToken.userId))
+        .limit(1);
+
+      if (!membership) {
+        throw new AppError(403, ErrorCode.FORBIDDEN, 'No shop membership found');
+      }
+
+      return {
+        accessToken: signAccessToken({
+          sub: shopOwner.id,
+          userType: 'SHOP_OWNER',
+          shopId: membership.shopId,
+          role: membership.role,
+          sessionVersion: shopOwner.sessionVersion,
+        }),
+        refreshToken: rawRefreshToken,
+      };
+    });
+  }
+
   // Rotate: revoke old token
   await db
     .update(refreshTokens)

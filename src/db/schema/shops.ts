@@ -1,4 +1,5 @@
-import { pgTable, uuid, varchar, boolean, text, integer, timestamp, pgEnum, jsonb } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgTable, uuid, varchar, boolean, text, integer, timestamp, pgEnum, jsonb, check } from 'drizzle-orm/pg-core';
 
 export const onboardingStatusEnum = pgEnum('onboarding_status', [
   'NOT_STARTED',
@@ -78,6 +79,10 @@ export const shops = pgTable('shops', {
   // Protection plans
   protectionEnabled: boolean('protection_enabled').notNull().default(false),
 
+  // Optional per-shop pricing overrides. Null means use the global setting.
+  customCommissionPercent: integer('custom_commission_percent'),
+  customInsurancePercent: integer('custom_insurance_percent'),
+
   // Notification preferences
   notificationSound: boolean('notification_sound').notNull().default(true),
   notificationVibration: boolean('notification_vibration').notNull().default(true),
@@ -87,4 +92,7 @@ export const shops = pgTable('shops', {
   // Timestamps
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  check('shops_custom_commission_percent_range', sql`${table.customCommissionPercent} IS NULL OR (${table.customCommissionPercent} >= 0 AND ${table.customCommissionPercent} <= 100)`),
+  check('shops_custom_insurance_percent_range', sql`${table.customInsurancePercent} IS NULL OR (${table.customInsurancePercent} >= 0 AND ${table.customInsurancePercent} <= 100)`),
+]);

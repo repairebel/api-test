@@ -21,8 +21,8 @@ export async function customerConfirmHandler(request: FastifyRequest, reply: Fas
 // GET /v1/shops/me/earnings/summary?range=7d|30d|90d
 export async function earningsSummaryHandler(request: FastifyRequest, reply: FastifyReply) {
   const shopId = request.user!.shopId;
-  const { range = '30d' } = request.query as { range?: string };
-  const summary = await getEarningsSummary(shopId, range);
+  const { range = '30d', from, to } = request.query as { range?: string; from?: string; to?: string };
+  const summary = await getEarningsSummary(shopId, range, from, to);
   return reply.send(successResponse(summary));
 }
 

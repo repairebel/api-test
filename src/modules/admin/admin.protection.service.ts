@@ -6,11 +6,11 @@ import {
   protectionClaims,
   payouts,
   shops,
-  systemSettings,
   users,
 } from '../../db/schema/index.js';
 import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 import { env } from '../../config/env.js';
+import { getShopFeeRates } from '../../lib/shop-fees.js';
 
 // ─── Stripe helper (lazy import) ───
 
@@ -154,16 +154,8 @@ async function findAllStripeSubscriptions(customerId: string) {
   };
 }
 
-const SETTINGS_ID = '00000000-0000-0000-0000-000000000001';
-
-async function getInsurancePercent(): Promise<number> {
-  const [settings] = await db
-    .select({ insurancePercent: systemSettings.insurancePercent })
-    .from(systemSettings)
-    .where(eq(systemSettings.id, SETTINGS_ID))
-    .limit(1);
-  const percent = settings?.insurancePercent ?? 5;
-  return Math.max(0, Math.min(100, percent));
+async function getInsurancePercent(shopId: string): Promise<number> {
+  return (await getShopFeeRates(shopId)).insurancePercent;
 }
 
 async function canUseOnBehalfOf(stripe: any, connectedAccountId: string): Promise<boolean> {
@@ -181,8 +173,6 @@ async function canUseOnBehalfOf(stripe: any, connectedAccountId: string): Promis
 
 export async function syncProtectionSubscriptionConnectSplits() {
   const stripe = await getStripe();
-  const insurancePercent = await getInsurancePercent();
-
   const activeSubs = await db
     .select({
       id: protectionSubscribers.id,
@@ -215,6 +205,7 @@ export async function syncProtectionSubscriptionConnectSplits() {
     }
 
     try {
+      const insurancePercent = await getInsurancePercent(row.shopId);
       const sub: any = await stripe.subscriptions.retrieve(subId);
       const useOnBehalfOf = await canUseOnBehalfOf(stripe, acct);
       const transferPercent = Math.max(0, Math.min(100, Number((100 - insurancePercent).toFixed(2))));
@@ -260,7 +251,7 @@ export async function syncProtectionSubscriptionConnectSplits() {
 
   return {
     message: 'Protection subscription Connect split sync completed',
-    insurancePercent,
+    feePolicy: 'Per-store override when set, otherwise the global protection fee',
     total: activeSubs.length,
     updated,
     skipped,

@@ -25,6 +25,7 @@ import profileRoutes from './admin.profile.routes.js';
 import broadcastRoutes from './admin.broadcast.routes.js';
 import appReleasesRoutes from './admin.app-releases.routes.js';
 import systemHealthRoutes from './admin.system-health.routes.js';
+import tipsRoutes from './admin.tips.routes.js';
 
 /**
  * Main admin module entry point.
@@ -56,6 +57,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   await fastify.register(broadcastRoutes);
   await fastify.register(appReleasesRoutes);
   await fastify.register(systemHealthRoutes);
+  await fastify.register(tipsRoutes);
 };
 
 export default adminRoutes;

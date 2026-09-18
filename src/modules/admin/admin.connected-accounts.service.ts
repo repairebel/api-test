@@ -69,6 +69,14 @@ export async function listConnectedAccounts(
     .select({
       id: shops.id,
       name: shops.name,
+      address: shops.address,
+      city: shops.city,
+      state: shops.state,
+      zipCode: shops.zipCode,
+      country: shops.country,
+      website: shops.website,
+      publicEmail: shops.publicEmail,
+      phone: shops.phone,
       logoUrl: shops.logoUrl,
       stripeAccountId: shops.stripeAccountId,
       stripeConnected: shops.stripeConnected,
@@ -80,8 +88,6 @@ export async function listConnectedAccounts(
       stripePayoutFreezeCode: shops.stripePayoutFreezeCode,
       stripePayoutFreezeReason: shops.stripePayoutFreezeReason,
       onboardingStatus: shops.onboardingStatus,
-      city: shops.city,
-      state: shops.state,
       createdAt: shops.createdAt,
     })
     .from(shops)
@@ -124,6 +130,14 @@ export async function getConnectedAccountDetail(shopId: string) {
     .select({
       id: shops.id,
       name: shops.name,
+      address: shops.address,
+      city: shops.city,
+      state: shops.state,
+      zipCode: shops.zipCode,
+      country: shops.country,
+      website: shops.website,
+      publicEmail: shops.publicEmail,
+      phone: shops.phone,
       stripeAccountId: shops.stripeAccountId,
       stripeConnected: shops.stripeConnected,
       stripeChargesEnabled: shops.stripeChargesEnabled,
@@ -146,18 +160,66 @@ export async function getConnectedAccountDetail(shopId: string) {
     throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Shop has no Stripe connected account');
   }
 
-  const stripe = await getStripe();
   const acctId = shop.stripeAccountId;
 
-  // 1) Retrieve account details
+  // Stripe is an external dependency. Preserve access to cached tax/account
+  // details when it is unavailable instead of turning the full page into a 502.
+  let stripe: any = null;
+  let stripeError: string | null = null;
   let account: any = null;
   try {
+    stripe = await getStripe();
     account = await stripe.accounts.retrieve(acctId);
   } catch (err: any) {
-    throw new AppError(502, ErrorCode.INTERNAL_ERROR, `Stripe API error: ${err.message}`);
+    stripeError = err?.message ?? 'Stripe account details are temporarily unavailable';
+    console.error(`Stripe account lookup failed for shop ${shopId}:`, stripeError);
+    account = {
+      id: acctId,
+      type: null,
+      email: shop.publicEmail,
+      business_type: null,
+      default_currency: 'usd',
+      country: shop.country,
+      created: shop.createdAt ? Math.floor(shop.createdAt.getTime() / 1000) : null,
+      requirements: { currently_due: [], past_due: [], eventually_due: [], pending_verification: [] },
+      capabilities: {},
+      company: {
+        name: shop.name,
+        phone: shop.phone,
+        address: {
+          line1: shop.address,
+          city: shop.city,
+          state: shop.state,
+          postal_code: shop.zipCode,
+          country: shop.country,
+        },
+      },
+      business_profile: {
+        name: shop.name,
+        support_email: shop.publicEmail,
+        support_phone: shop.phone,
+        url: shop.website,
+        support_address: {
+          line1: shop.address,
+          city: shop.city,
+          state: shop.state,
+          postal_code: shop.zipCode,
+          country: shop.country,
+        },
+      },
+    };
   }
 
-  const syncedStripe = await syncStripePayoutStatusForShop(shop.id, account);
+  const syncedStripe = stripeError
+    ? {
+        stripeConnected: shop.stripeConnected,
+        stripeChargesEnabled: shop.stripeChargesEnabled,
+        stripePayoutsEnabled: shop.stripePayoutsEnabled,
+        stripePayoutFreezeCode: shop.stripePayoutFreezeCode,
+        stripePayoutFreezeReason: shop.stripePayoutFreezeReason,
+        stripePayoutStatusSyncedAt: shop.stripePayoutStatusSyncedAt ?? new Date(),
+      }
+    : await syncStripePayoutStatusForShop(shop.id, account);
   const payoutFreeze = computePayoutFreezeState({
     manualPayoutFreeze: shop.manualPayoutFreeze,
     manualPayoutFreezeReason: shop.manualPayoutFreezeReason,
@@ -167,7 +229,7 @@ export async function getConnectedAccountDetail(shopId: string) {
 
   // 2) Get balance for this connected account
   let balance: any = null;
-  try {
+  if (stripe) try {
     balance = await stripe.balance.retrieve({ stripeAccount: acctId });
   } catch (err: any) {
     console.error('Balance fetch error:', err.message);
@@ -175,7 +237,7 @@ export async function getConnectedAccountDetail(shopId: string) {
 
   // 3) Get recent transfers TO this account
   let transfers: any[] = [];
-  try {
+  if (stripe) try {
     const list = await stripe.transfers.list({
       destination: acctId,
       limit: 20,
@@ -187,7 +249,7 @@ export async function getConnectedAccountDetail(shopId: string) {
 
   // 4) Get recent payouts FROM this connected account
   let stripPayouts: any[] = [];
-  try {
+  if (stripe) try {
     const list = await stripe.payouts.list(
       { limit: 20 },
       { stripeAccount: acctId },
@@ -197,7 +259,15 @@ export async function getConnectedAccountDetail(shopId: string) {
     console.error('Payouts fetch error:', err.message);
   }
 
-  const payoutSchedule = await getConnectedPayoutSchedule(stripe, acctId);
+  let payoutSchedule = null;
+  if (stripe) {
+    try {
+      payoutSchedule = await getConnectedPayoutSchedule(stripe, acctId);
+    } catch (err: any) {
+      stripeError ??= err?.message ?? 'Stripe payout schedule is temporarily unavailable';
+      console.error(`Stripe payout schedule lookup failed for shop ${shopId}:`, err?.message ?? err);
+    }
+  }
 
   // 5) Get our internal payouts
   const internalPayouts = await db
@@ -208,6 +278,8 @@ export async function getConnectedAccountDetail(shopId: string) {
     .limit(20);
 
   return {
+    stripeAvailable: stripeError === null,
+    stripeError,
     shop: {
       id: shop.id,
       name: shop.name,

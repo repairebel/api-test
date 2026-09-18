@@ -6,7 +6,6 @@ import {
   protectionClaims,
   payouts,
   users,
-  systemSettings,
   shops,
   memberships,
   jobs,
@@ -15,12 +14,11 @@ import { AppError, ErrorCode } from '../../plugins/error-handler.plugin.js';
 import { env } from '../../config/env.js';
 import { sendProtectionNewSubscriberEmail } from '../../lib/email.js';
 import { ensureStripeCustomerForUser } from '../../lib/stripe-customers.js';
+import { getShopFeeRates } from '../../lib/shop-fees.js';
 
 // ─────────────────────────────────────────────
 //  Stripe helpers (same pattern as customer-settings)
 // ─────────────────────────────────────────────
-
-const SETTINGS_ID = '00000000-0000-0000-0000-000000000001';
 
 async function getStripe() {
   const stripeKey = env.STRIPE_SECRET_KEY;
@@ -36,14 +34,8 @@ async function getOrCreateStripeCustomer(userId: string) {
   return ensureStripeCustomerForUser(stripe, userId);
 }
 
-async function getInsurancePercent(): Promise<number> {
-  const [settings] = await db
-    .select({ insurancePercent: systemSettings.insurancePercent })
-    .from(systemSettings)
-    .where(eq(systemSettings.id, SETTINGS_ID))
-    .limit(1);
-  const percent = settings?.insurancePercent ?? 5;
-  return Math.max(0, Math.min(100, percent));
+async function getInsurancePercent(shopId: string): Promise<number> {
+  return (await getShopFeeRates(shopId)).insurancePercent;
 }
 
 async function getShopConnectedAccountId(shopId: string): Promise<string | null> {
@@ -432,7 +424,7 @@ export async function subscribeToPlan(customerId: string, input: SubscribeInput)
   const stripe = await getStripe();
   const stripeCustomerId = await getOrCreateStripeCustomer(customerId);
   const paymentMethodId = await getCustomerDefaultPaymentMethod(stripe, stripeCustomerId);
-  const insurancePercent = await getInsurancePercent();
+  const insurancePercent = await getInsurancePercent(plan.shopId);
 
   // ── Clean up orphaned / incomplete Stripe subscriptions for this customer ──
   // This prevents orphaned active subs from piling up when 3DS retries occur
@@ -456,6 +448,7 @@ export async function subscribeToPlan(customerId: string, input: SubscribeInput)
           .limit(1);
 
         if (pendingRecord && pendingRecord.status !== 'ACTIVE' && pendingRecord.status !== 'CANCELED') {
+          const recordInsurancePercent = await getInsurancePercent(pendingRecord.shopId);
           const connectedForRecord = await getShopConnectedAccountId(pendingRecord.shopId);
           if (connectedForRecord && oldSub.id.startsWith('sub_')) {
             const canUseOboForRecord = await canUseOnBehalfOf(stripe, connectedForRecord);
@@ -463,14 +456,14 @@ export async function subscribeToPlan(customerId: string, input: SubscribeInput)
               stripe,
               oldSub.id,
               connectedForRecord,
-              insurancePercent,
+              recordInsurancePercent,
               canUseOboForRecord,
             );
           }
 
           // Activate the existing DB record instead of creating a new subscription
           const [planForRecord] = await db.select().from(protectionPlans).where(eq(protectionPlans.id, pendingRecord.planId)).limit(1);
-          const feeForRecord = Math.round((planForRecord?.priceCents ?? 0) * (insurancePercent / 100));
+          const feeForRecord = Math.round((planForRecord?.priceCents ?? 0) * (recordInsurancePercent / 100));
 
           await db
             .update(protectionSubscribers)
@@ -829,7 +822,7 @@ export async function confirmSubscriptionPayment(customerId: string, subscriptio
       .from(protectionPlans)
       .where(eq(protectionPlans.id, sub.planId))
       .limit(1);
-    const insurancePercent = await getInsurancePercent();
+    const insurancePercent = await getInsurancePercent(sub.shopId);
     const platformFeeCents = Math.round((plan?.priceCents ?? 0) * (insurancePercent / 100));
 
     await db

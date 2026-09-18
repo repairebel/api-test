@@ -371,14 +371,8 @@ export async function createOffer(
     throw new AppError(403, ErrorCode.FORBIDDEN, 'Your shop is not dispatched to this request');
   }
 
-  // 3. Validate price >= minPriceCents
-  if (body.priceCents < request.minPriceCents) {
-    throw new AppError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      `Price must be at least ${request.minPriceCents} cents (suggested price)`,
-    );
-  }
+  // 3. The store controls its bid. The schema enforces a $1 minimum; the
+  // request's suggested price is guidance rather than a store-side floor.
 
   // 4. Check no existing active offer from this shop
   const [existingOffer] = await db
